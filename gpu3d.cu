@@ -6,13 +6,40 @@
 template <typename T> void test_tensor(int rank, int size);
 template <typename T> void test(int size);
 
-int main() {
+int main(int argc, char *argv[]) {
+
+  int gpuid = -1;
+  bool arg_ok = true;
+  if (argc >= 3) {
+    if (strcmp(argv[1], "-device") == 0) {
+      sscanf(argv[2], "%d", &gpuid);
+    } else {
+      arg_ok = false;
+    }
+  } else if (argc > 1) {
+    arg_ok = false;
+  }
+
+  if (!arg_ok) {
+    printf("gpu3d [options]\n");
+    printf("Options:\n");
+    printf("-device gpuid : use GPU with ID gpuid\n");
+    return 1;
+  }
+
+  if (gpuid >= 0) {
+    cudaCheck(cudaSetDevice(gpuid));
+  }
+
+  cudaCheck(cudaDeviceReset());
 
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
   // cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeFourByte));
 
   test<double>(256);
   test_tensor<double>(3, 256);
+
+  cudaCheck(cudaDeviceReset());
 
   return 0;
 }
@@ -74,7 +101,7 @@ void test_tensor(int rank, int size) {
     struct timespec now, tmstart;
     clock_gettime(CLOCK_REALTIME, &tmstart);
   
-    transposeTensor<T>(plan, d_data_in, d_data_out, 0);
+    transposeTensorArg<T>(plan, d_data_in, d_data_out, 0);
     cudaCheck(cudaDeviceSynchronize());
   
     clock_gettime(CLOCK_REALTIME, &now);

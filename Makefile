@@ -34,7 +34,7 @@ endif
 
 GENCODE_SM35  := -gencode arch=compute_35,code=sm_35
 GENCODE_SM50  := -gencode arch=compute_50,code=sm_50
-GENCODE_FLAGS := $(GENCODE_SM30) $(GENCODE_SM35)
+GENCODE_FLAGS := $(GENCODE_SM35) $(GENCODE_SM50)
 
 # CUDA_CFLAGS = flags for compiling with CUDA
 # CUDA_LFLAGS = flags for linking with CUDA
