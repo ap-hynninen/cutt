@@ -1,9 +1,11 @@
+#include <vector>
+#include <math.h>
 #include <time.h>
 #include "CudaUtils.h"
 #include "CudaTranspose.h"
 #include "CpuTranspose.h"
 
-template <typename T> void test_tensor(int rank, int size);
+template <typename T> void test_tensor(std::vector<int>& dim);
 template <typename T> void test(int size);
 
 int main(int argc, char *argv[]) {
@@ -36,8 +38,30 @@ int main(int argc, char *argv[]) {
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
   // cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeFourByte));
 
-  test<double>(256);
-  test_tensor<double>(3, 256);
+  // test<double>(256);
+
+  int vol = 40*1000000;
+  int ranks[7] = {3, 4, 5, 6, 7, 8, 15};
+  for (int i=0;i < 7;i++) {
+    std::vector<int> dim(ranks[i]);
+    int dimave = (int)pow(vol, 1.0/(double)ranks[i]);
+    if (dimave < 100.0) {
+      dim[0]            = 32;
+      dim[ranks[i] - 1] = 32;
+    } else {
+      dim[0]            = dimave;
+      dim[ranks[i] - 1] = dimave;
+    }
+    // Distribute remaining volume to the middle ranks
+    int ranks_left = ranks[i] - 2;
+    double vol_left = vol/(double)(dim[0]*dim[ranks[i] - 1]);
+    for (int r=1;r < ranks[i] - 1;r++) {
+      dim[r] = (int)pow(vol_left, 1.0/(double)ranks_left);
+      vol_left /= (double)dim[r];
+      ranks_left--;
+    }
+    test_tensor<double>(dim);
+  }
 
   cudaCheck(cudaDeviceReset());
 
@@ -61,13 +85,13 @@ bool checkResult(const int vol,
 #define GB 1000000000.0
 
 template <typename T>
-void test_tensor(int rank, int size) {
+void test_tensor(std::vector<int>& dim) {
+
+  int rank = dim.size();
 
   int vol = 1;
-  int* dim = new int[rank];
   for (int r=0;r < rank;r++) {
-    dim[r] = size;
-    vol *= size;
+    vol *= dim[r];
   }
 
   int* permutation = new int[rank];
@@ -75,9 +99,18 @@ void test_tensor(int rank, int size) {
   for (int r=0;r < rank;r++) {
     permutation[r] = rank - 1 - r;
   }
-  permutation[0] = 1;
-  permutation[1] = 2;
-  permutation[2] = 0;
+
+  printf("number of elements %d\n", vol);
+  printf("dimensions\n");
+  for (int r=0;r < rank;r++) {
+    printf("%d ", dim[r]);
+  }
+  printf("\n");
+  printf("permutation\n");
+  for (int r=0;r < rank;r++) {
+    printf("%d%c",permutation[r]+1, (r==rank-1) ? ' ' : '-');
+  }
+  printf("\n");
 
   T* h_data_in =  new T[vol];
   T* h_data_ref = new T[vol];
@@ -93,11 +126,53 @@ void test_tensor(int rank, int size) {
   allocate_device<T>(&d_data_out, vol);
   copy_HtoD<T>(h_data_in, d_data_in, vol);
 
-  TensorTransposePlan plan(rank, dim, permutation);
+  TensorTransposePlan plan(rank, dim.data(), permutation);
 
-  cpuTransposeTensor<T>(rank, dim, permutation, h_data_in, h_data_ref);
+  cpuTransposeTensor<T>(rank, dim.data(), permutation, h_data_in, h_data_ref);
 
   for (int i=0;i < 4;i++) {
+    struct timespec now, tmstart;
+    clock_gettime(CLOCK_REALTIME, &tmstart);
+
+    copy_xyz(vol, d_data_in, d_data_out, 0);
+
+    cudaCheck(cudaDeviceSynchronize());
+
+    clock_gettime(CLOCK_REALTIME, &now);
+    double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+    printf("copy_xyz wall time %lfms %lfGB/s\n", seconds*1000.0, (double)(vol*sizeof(T)*2)/GB/seconds);
+  }
+
+#if 0
+  printf("transposeTensor\n");
+  for (int i=0;i < 4;i++) {
+    clear_device_array<T>(d_data_out, vol);
+    cudaCheck(cudaDeviceSynchronize());
+
+    struct timespec now, tmstart;
+    clock_gettime(CLOCK_REALTIME, &tmstart);
+  
+    transposeTensor<T>(plan, d_data_in, d_data_out, 0);
+    cudaCheck(cudaDeviceSynchronize());
+  
+    clock_gettime(CLOCK_REALTIME, &now);
+    double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+    printf("wall time %lfms %lfGB/s\n", seconds*1000.0, (double)(vol*sizeof(T)*2)/GB/seconds);
+  }
+
+  copy_DtoH<T>(d_data_out, h_data_out, vol);
+  if (!checkResult<T>(vol, h_data_ref, h_data_out)) {
+    printf("FAILED\n");
+  } else {
+    printf("OK\n");
+  }
+#endif
+
+  printf("transposeTensorArg\n");
+  for (int i=0;i < 4;i++) {
+    clear_device_array<T>(d_data_out, vol);
+    cudaCheck(cudaDeviceSynchronize());
+
     struct timespec now, tmstart;
     clock_gettime(CLOCK_REALTIME, &tmstart);
   
@@ -106,14 +181,8 @@ void test_tensor(int rank, int size) {
   
     clock_gettime(CLOCK_REALTIME, &now);
     double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
-    for (int r=0;r < rank;r++)
-      printf("%d%c",permutation[r]+1, (r==rank-1) ? ' ' : '-');
     printf("wall time %lfms %lfGB/s\n", seconds*1000.0, (double)(vol*sizeof(T)*2)/GB/seconds);
   }
-
-  // transpose_xyz_yzx(size, size, size, 
-  //   size, size, size, size,
-  //   d_data_in, d_data_out, 0);
 
   copy_DtoH<T>(d_data_out, h_data_out, vol);
   if (!checkResult<T>(vol, h_data_ref, h_data_out)) {
@@ -127,7 +196,6 @@ void test_tensor(int rank, int size) {
   //   printf("%lf %lf\n", h_data_ref[i], h_data_out[i]);
   // }
 
-  delete [] dim;
   delete [] permutation;
   delete [] h_data_in;
   delete [] h_data_ref;
@@ -159,7 +227,7 @@ void test(int size) {
     struct timespec now, tmstart;
     clock_gettime(CLOCK_REALTIME, &tmstart);
 
-    copy_xyz(nx, ny, nz, d_data_in, d_data_out, 0);
+    copy_xyz(nx*ny*nz, d_data_in, d_data_out, 0);
 
     cudaCheck(cudaDeviceSynchronize());
 

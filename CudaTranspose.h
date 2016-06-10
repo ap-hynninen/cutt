@@ -8,21 +8,37 @@ const int TILEROWS = 8;
 
 // Arguments for transposeTensorKernel
 // Enough to support tensors of rank 200 or so.
-const int transposeArgSize = 2048 - 4 - 2*2;
+const int transposeArgSize = 2048 - 5 - 2*2;
 __constant__ int transposeArg[transposeArgSize];
 
-//
-//
+//#define DIMBAR_LOOP
+
 template <typename T>
 __global__ void transposeTensorKernelArg(
-  const int sizeMmk, const int sizeMbar,
+  const int volMbar, const int sizeMmk, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
+#ifndef DIMBAR_LOOP
+  const int* __restrict__ gl_posDimMbarIn, const int* __restrict__ gl_posDimMbarOut,
+  const int* __restrict__ gl_cuDimMbarIn, const int* __restrict__ gl_cuDimMbarOut,
+#endif
   const T* __restrict__ dataIn, T* __restrict__ dataOut) {
   
   // Shared memory
   __shared__ T shTile[TILEDIM][TILEDIM+1];
+#ifndef DIMBAR_LOOP
+  __shared__ int sh_posDimMbarIn[15];
+  __shared__ int sh_posDimMbarOut[15];
+  __shared__ int sh_cuDimMbarIn[15];
+  __shared__ int sh_cuDimMbarOut[15];
+  // NEXT THING TO TRY:
+  // Load gl_posDimMbarIn, gl_posDimMbarOut,
+  //      gl_cuDimMbarIn, gl_cuDimMbarOut
+  // into shared memory
+#endif
 
-  // const int warpLane = threadIdx.x & (warpSize - 1);
+#ifndef DIMBAR_LOOP
+  const int warpLane = threadIdx.x & (warpSize - 1);
+#endif
 
   int iarg = 0;
   int* dimMmkIn     = &transposeArg[iarg];
@@ -31,87 +47,105 @@ __global__ void transposeTensorKernelArg(
   int* dimMbarOut   = &transposeArg[iarg+=sizeMbar];
   int* cuDimMbarIn  = &transposeArg[iarg+=sizeMbar];
   int* cuDimMbarOut = &transposeArg[iarg+=sizeMbar];
-
-  {
-    // Read position
-    const int x = blockIdx.x * TILEDIM + threadIdx.x;
-    const int y = blockIdx.y * TILEDIM + threadIdx.y;
-
-#if 1
-    int pos0 = x + y*cuDimMk;
-    int z = blockIdx.z;
-    for (int i=0;i < sizeMbar;i++) {
-      int dimMbarVal = dimMbarIn[i];
-      pos0 += (z % dimMbarVal)*cuDimMbarIn[i];
-      z /= dimMbarVal;
-    }
-#else
-    int cuDimMk = cuDimIn[Mk[0]];
-    int pos0 = 0;
-    if (warpLane < sizeMbar) {
-      int z = blockIdx.z/posDimMbarIn[warpLane];
-      pos0 = (z % dimMbarIn[warpLane])*cuDimMbarIn[warpLane];
-    }
-#pragma unroll
-    for (int i=16;i >= 1;i/=2) {
-      pos0 += __shfl_xor(pos0, i, 32);
-    }
-    pos0 += x + y*cuDimMk;
+#ifndef DIMBAR_LOOP
+  int* posDimMbarIn  = &transposeArg[iarg+=sizeMbar];
+  int* posDimMbarOut = &transposeArg[iarg+=sizeMbar];
 #endif
 
-    // Read data into shared memory tile
-    for (int j=0;j < TILEDIM;j += TILEROWS) {
-      int pos = pos0 + j*cuDimMk;
-      if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1]))
-        shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
-    }
-  }
+  for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z) {
 
-  {
-    // Write position
-    const int x = blockIdx.x * TILEDIM + threadIdx.y;
-    const int y = blockIdx.y * TILEDIM + threadIdx.x;
-
-#if 1
-    int pos0 = y + x*cuDimMm;
-    int z = blockIdx.z;
-    for (int i=0;i < sizeMbar;i++) {
-      int dimMbarVal = dimMbarOut[i];
-      pos0 += (z % dimMbarVal)*cuDimMbarOut[i];
-      z /= dimMbarVal;
-    }
+    // Read from global memory
+    {
+#ifdef DIMBAR_LOOP
+      const int x = blockIdx.x * TILEDIM + threadIdx.x;
+      const int y = blockIdx.y * TILEDIM + threadIdx.y;
+      int pos0 = x + y*cuDimMk;
+      int z = blockz;
+      for (int i=0;i < sizeMbar;i++) {
+        int dimMbarVal = dimMbarIn[i];
+        pos0 += (z % dimMbarVal)*cuDimMbarIn[i];
+        z /= dimMbarVal;
+      }
 #else
-    int cuDimMm = cuDimOut[Mm[0]];
-    int pos0 = 0;
-    if (warpLane < sizeMbar) {
-      int z = blockIdx.z/posDimMbarOut[warpLane];
-      pos0 = (z % dimMbarOut[warpLane])*cuDimMbarOut[warpLane];
-    }
+      const int x = blockIdx.x * TILEDIM + threadIdx.x;
+      const int y = blockIdx.y * TILEDIM + threadIdx.y;
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockIdx.z/gl_posDimMbarIn[warpLane];
+        pos0 = (z % dimMbarIn[warpLane])*gl_cuDimMbarIn[warpLane];
+      }
+      // for (int i=1;i < sizeMbar;i*=2) {
+      //   pos0 += __shfl_down(pos0, i);
+      // }
+      // pos0 = __shfl(pos0, 0);
 #pragma unroll
-    for (int i=16;i >= 1;i/=2) {
-      pos0 += __shfl_xor(pos0, i, 32);
-    }
-    pos0 += y + x*cuDimMm;
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i, 32);
+      }
+      pos0 += x + y*cuDimMk;
 #endif
 
-    __syncthreads();
+      __syncthreads();
 
-    // Write data into global memory
-    for (int j=0;j < TILEDIM;j += TILEROWS) {
-      int pos = pos0 + j*cuDimMm;
-      if ((y < dimMmkOut[0]) && (x + j < dimMmkOut[1]))
-        dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
+      // Read data into shared memory tile
+      for (int j=0;j < TILEDIM;j += TILEROWS) {
+        int pos = pos0 + j*cuDimMk;
+        if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
+          shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
+        }
+      }
+    }
+
+    // Write to global memory
+    {
+      const int x = blockIdx.x * TILEDIM + threadIdx.y;
+      const int y = blockIdx.y * TILEDIM + threadIdx.x;
+
+#ifdef DIMBAR_LOOP
+      int pos0 = y + x*cuDimMm;
+      int z = blockz;
+      for (int i=0;i < sizeMbar;i++) {
+        int dimMbarVal = dimMbarOut[i];
+        pos0 += (z % dimMbarVal)*cuDimMbarOut[i];
+        z /= dimMbarVal;
+      }
+#else
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockIdx.z/gl_posDimMbarOut[warpLane];
+        pos0 = (z % dimMbarOut[warpLane])*gl_cuDimMbarOut[warpLane];
+      }
+      // for (int i=1;i < sizeMbar;i*=2) {
+      //   pos0 += __shfl_down(pos0, i);
+      // }
+      // pos0 = __shfl(pos0, 0);
+#pragma unroll
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i, 32);
+      }
+      pos0 += y + x*cuDimMm;
+#endif
+
+      __syncthreads();
+
+      // Write data into global memory
+      for (int j=0;j < TILEDIM;j += TILEROWS) {
+        int pos = pos0 + j*cuDimMm;
+        if ((y < dimMmkOut[0]) && (x + j < dimMmkOut[1])) {
+          dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
+        }
+      }
     }
   }
 
 }
 
-#if 0
+#if 1
 //
 //
 template <typename T>
 __global__ void transposeTensorKernel(
-  const int rank, const int sizeMbar,
+  const int volMbar, const int rank, const int sizeMbar,
   const int* __restrict__ permutation,
   const int* __restrict__ Mm, const int* __restrict__ Mk,
   const int* __restrict__ dim,
@@ -133,6 +167,8 @@ __global__ void transposeTensorKernel(
   int MmVal = __ldg(&Mm[0]);
   int MkVal = __ldg(&Mk[0]);
 
+  for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z) {
+
   {
     // Read position
     const int x = blockIdx.x * TILEDIM + threadIdx.x;
@@ -145,7 +181,7 @@ __global__ void transposeTensorKernel(
 #if 1
     int cuDimMk = __ldg(&cuDimIn[MkVal]);
     int pos0 = x + y*cuDimMk;
-    int z = blockIdx.z;
+    int z = blockz;
     for (int i=0;i < sizeMbar;i++) {
       int dimMbarVal = __ldg(&dimMbarIn[i]);
       pos0 += (z % dimMbarVal)*__ldg(&cuDimMbarIn[i]);
@@ -164,6 +200,8 @@ __global__ void transposeTensorKernel(
     }
     pos0 += x + y*cuDimMk;
 #endif
+
+    __syncthreads();
 
     // Read data into shared memory tile
     if (x < dimMmk[0]) {
@@ -188,7 +226,7 @@ __global__ void transposeTensorKernel(
 #if 1
     int cuDimMm = cuDimOut[MmVal];
     int pos0 = y + x*cuDimMm;
-    int z = blockIdx.z;
+    int z = blockz;
     for (int i=0;i < sizeMbar;i++) {
       int dimMbarVal = dimMbarOut[i];
       pos0 += (z % dimMbarVal)*cuDimMbarOut[i];
@@ -219,6 +257,7 @@ __global__ void transposeTensorKernel(
           dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
       }
     }
+  }
   }
 
 }
@@ -362,7 +401,7 @@ public:
 
     int* tmp_dimMmkOut = new int[sizeMmk];
     tmp_dimMmkOut[0] = in_dim[in_permutation[tmp_Mk[0]]];
-    tmp_dimMmkOut[1] = in_dim[in_permutation[tmp_Mm[1]]];
+    tmp_dimMmkOut[1] = in_dim[in_permutation[tmp_Mm[0]]];
 
     int* h_transposeArg = new int[transposeArgSize];
     int iarg = 0;
@@ -372,6 +411,12 @@ public:
     for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_dimMbarOut[j];
     for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_cuDimMbarIn[j];
     for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_cuDimMbarOut[j];
+#ifndef DIMBAR_LOOP
+    for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_posDimMbarIn[j];
+    for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_posDimMbarOut[j];
+#endif
+
+    cudaCheck(cudaDeviceSynchronize());
 
     cudaCheck(cudaMemcpyToSymbol(transposeArg, h_transposeArg,
       transposeArgSize*sizeof(int), 0, cudaMemcpyHostToDevice));
@@ -457,24 +502,30 @@ void transposeTensorArg(TensorTransposePlan& plan,
 
   dim3 numthread(TILEDIM, TILEROWS, 1);
   dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+  numblock.z = min(65535, numblock.z);
 
   transposeTensorKernelArg<T> <<< numblock, numthread, 0, stream >>>
-  (plan.sizeMmk, plan.sizeMbar, plan.cuDimMk, plan.cuDimMm,
+  (plan.volMbar, plan.sizeMmk, plan.sizeMbar, plan.cuDimMk, plan.cuDimMm,
+#ifndef DIMBAR_LOOP
+    plan.posDimMbarIn, plan.posDimMbarOut,
+    plan.cuDimMbarIn, plan.cuDimMbarOut,
+#endif
     dataIn, dataOut);
 
   cudaCheck(cudaGetLastError());
 }
 
-#if 0
+#if 1
 template <typename T>
 void transposeTensor(TensorTransposePlan& plan,
   const T* dataIn, T* dataOut, cudaStream_t stream) {
 
   dim3 numthread(TILEDIM, TILEROWS, 1);
   dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+  numblock.z = min(65535, numblock.z);
 
   transposeTensorKernel<T> <<< numblock, numthread, 0, stream >>>
-  (plan.rank, plan.sizeMbar,
+  (plan.volMbar, plan.rank, plan.sizeMbar,
     plan.permutation,
     plan.Mm, plan.Mk,
     plan.dim, plan.dimMbarIn, plan.dimMbarOut,
@@ -714,10 +765,8 @@ __global__ void copy_kernel(
 //
 template <typename T>
 void copy_xyz(
-  const int nx, const int ny, const int nz,
+  const int nx_ny_nz,
   const T* data_in, T* data_out, cudaStream_t stream) {
-
-  int nx_ny_nz = nx*ny*nz;
 
   int numthread = TILEDIM*TILEROWS;
   int numblock = min(65535, (nx_ny_nz - 1)/numthread + 1);
@@ -762,7 +811,7 @@ void copy_vector_xyz(
 
   int numthread = TILEDIM*TILEROWS;
   int numblock = min(65535, (nx_ny_nz/vectorLength - 1)/numthread + 1);
-  int shmemsize = 16384*2;
+  int shmemsize = 0;
 
   copy_vector_kernel<T> <<< numblock, numthread, shmemsize, stream >>>
   (nx_ny_nz, data_in, data_out);
