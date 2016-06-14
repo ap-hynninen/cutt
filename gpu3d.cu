@@ -5,7 +5,7 @@
 #include "CudaTranspose.h"
 #include "CpuTranspose.h"
 
-template <typename T> void test_tensor(std::vector<int>& dim);
+template <typename T> double test_tensor(std::vector<int>& dim);
 template <typename T> void test(int size);
 
 int main(int argc, char *argv[]) {
@@ -38,10 +38,13 @@ int main(int argc, char *argv[]) {
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
   // cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeFourByte));
 
+  // cudaCheck(cudaDeviceSetCacheConfig(cudaFuncCachePreferEqual));
+
   // test<double>(256);
 
   int vol = 40*1000000;
   int ranks[7] = {3, 4, 5, 6, 7, 8, 15};
+  double bandwidths[7];
   for (int i=0;i < 7;i++) {
     std::vector<int> dim(ranks[i]);
     int dimave = (int)pow(vol, 1.0/(double)ranks[i]);
@@ -60,7 +63,11 @@ int main(int argc, char *argv[]) {
       vol_left /= (double)dim[r];
       ranks_left--;
     }
-    test_tensor<double>(dim);
+    bandwidths[i] = test_tensor<double>(dim);
+  }
+
+  for (int i=0;i < 7;i++) {
+    printf("%lf\n", bandwidths[i]);
   }
 
   cudaCheck(cudaDeviceReset());
@@ -85,7 +92,7 @@ bool checkResult(const int vol,
 #define GB 1000000000.0
 
 template <typename T>
-void test_tensor(std::vector<int>& dim) {
+double test_tensor(std::vector<int>& dim) {
 
   int rank = dim.size();
 
@@ -168,6 +175,7 @@ void test_tensor(std::vector<int>& dim) {
   }
 #endif
 
+  double bandwidth_ave = 0.0;
   printf("transposeTensorArg\n");
   for (int i=0;i < 4;i++) {
     clear_device_array<T>(d_data_out, vol);
@@ -181,8 +189,11 @@ void test_tensor(std::vector<int>& dim) {
   
     clock_gettime(CLOCK_REALTIME, &now);
     double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
-    printf("wall time %lfms %lfGB/s\n", seconds*1000.0, (double)(vol*sizeof(T)*2)/GB/seconds);
+    double bandwidth = (double)(vol*sizeof(T)*2)/GB/seconds;
+    printf("wall time %lfms %lfGB/s\n", seconds*1000.0, bandwidth);
+    bandwidth_ave += bandwidth;
   }
+  bandwidth_ave /= 4.0;
 
   copy_DtoH<T>(d_data_out, h_data_out, vol);
   if (!checkResult<T>(vol, h_data_ref, h_data_out)) {
@@ -203,6 +214,8 @@ void test_tensor(std::vector<int>& dim) {
 
   deallocate_device<T>(&d_data_in);
   deallocate_device<T>(&d_data_out);
+
+  return bandwidth_ave;
 }
 
 template <typename T>
