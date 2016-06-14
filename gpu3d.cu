@@ -5,6 +5,7 @@
 #include "CudaTranspose.h"
 #include "CpuTranspose.h"
 
+double test_memcpy(int size);
 template <typename T> double test_tensor(std::vector<int>& dim);
 template <typename T> void test(int size);
 
@@ -41,6 +42,8 @@ int main(int argc, char *argv[]) {
   // cudaCheck(cudaDeviceSetCacheConfig(cudaFuncCachePreferEqual));
 
   // test<double>(256);
+
+  // test_memcpy(67108864);
 
   int vol = 40*1000000;
   int ranks[7] = {3, 4, 5, 6, 7, 8, 15};
@@ -90,6 +93,55 @@ bool checkResult(const int vol,
 }
 
 #define GB 1000000000.0
+
+double test_memcpy(int size) {
+  float* h_data_in =  new float[size];
+  float* h_data_out = new float[size];
+  for (int i=0;i < size;i++) {
+    h_data_in[i] = (float)i;
+  }
+  float* d_data_in  = NULL;
+  float* d_data_out = NULL;
+  allocate_device<float>(&d_data_in, size);
+  allocate_device<float>(&d_data_out, size);
+  copy_HtoD<float>(h_data_in, d_data_in, size);
+
+  printf("Memcpy size %d bytes\n", size*sizeof(float));
+
+  double bandwidth_ave = 0.0;
+  for (int i=0;i < 4;i++) {
+    clear_device_array<float>(d_data_out, size);
+    cudaCheck(cudaDeviceSynchronize());
+
+    struct timespec now, tmstart;
+    clock_gettime(CLOCK_REALTIME, &tmstart);
+
+    memcpy_float(size, d_data_in, d_data_out, 0);
+
+    cudaCheck(cudaDeviceSynchronize());
+
+    clock_gettime(CLOCK_REALTIME, &now);
+    double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+    double bandwidth = (double)(size*sizeof(float)*2)/GB/seconds;
+    printf("memcpy_float wall time %lfms %lfGB/s\n", seconds*1000.0, bandwidth);
+    bandwidth_ave += bandwidth;
+  }
+  bandwidth_ave /= 4.0;
+
+  copy_DtoH<float>(d_data_out, h_data_out, size);
+  if (!checkResult<float>(size, h_data_in, h_data_out)) {
+    printf("memcpy_float FAILED\n");
+  } else {
+    printf("memcpy_float OK\n");
+  }
+
+  delete [] h_data_in;
+  delete [] h_data_out;
+  deallocate_device<float>(&d_data_in);
+  deallocate_device<float>(&d_data_out);
+
+  return bandwidth_ave;
+}
 
 template <typename T>
 double test_tensor(std::vector<int>& dim) {
@@ -260,7 +312,7 @@ void test(int size) {
     struct timespec now, tmstart;
     clock_gettime(CLOCK_REALTIME, &tmstart);
 
-    copy_vector_xyz(nx, ny, nz, d_data_in, d_data_out, 0);
+    copy_vector_xyz(nx*ny*nz, d_data_in, d_data_out, 0);
 
     cudaCheck(cudaDeviceSynchronize());
 

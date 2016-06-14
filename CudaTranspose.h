@@ -752,12 +752,10 @@ __global__ void copy_vector_kernel(const int n, T* data_in, T* data_out) {
 //
 template <typename T>
 void copy_vector_xyz(
-  const int nx, const int ny, const int nz,
+  const int nx_ny_nz,
   T* data_in, T* data_out, cudaStream_t stream) {
 
   const int vectorLength = 16/sizeof(T);
-
-  int nx_ny_nz = nx*ny*nz;
 
   int numthread = TILEDIM*TILEROWS;
   int numblock = min(65535, (nx_ny_nz/vectorLength - 1)/numthread + 1);
@@ -765,6 +763,36 @@ void copy_vector_xyz(
 
   copy_vector_kernel<T> <<< numblock, numthread, shmemsize, stream >>>
   (nx_ny_nz, data_in, data_out);
+
+  cudaCheck(cudaGetLastError());
+}
+
+template <int numElem>
+__global__ void memcpy_kernel(const int n, float4 *data_in, float4* data_out) {
+  int index = threadIdx.x + numElem*blockIdx.x*blockDim.x;
+  float4 a[numElem];
+  for (int i=0;i < numElem;i++) {
+    if (index + i*blockDim.x < n) a[i] = data_in[index + i*blockDim.x];
+  }
+  for (int i=0;i < numElem;i++) {
+    if (index + i*blockDim.x < n) data_out[index + i*blockDim.x] = a[i];
+  }
+}
+
+#define NUM_ELEM 2
+//
+// Copy using vectorized loads and stores
+//
+void memcpy_float(const int n,
+  float* data_in, float* data_out, cudaStream_t stream) {
+
+  int numthread = 256;
+  int numblock = min(65535, (n/(4*NUM_ELEM) - 1)/numthread + 1);
+  int shmemsize = 0;
+  printf("numblock %d\n", numblock);
+
+  memcpy_kernel<NUM_ELEM> <<< numblock, numthread, shmemsize, stream >>>
+  (n/4, (float4 *)data_in, (float4 *)data_out);
 
   cudaCheck(cudaGetLastError());
 }
