@@ -3,32 +3,56 @@
 
 #include "CudaUtils.h"
 
+struct MbarRecord {
+  int posDimIn;
+  int dimIn;
+  int cuDimIn;
+  int posDimOut;
+  int dimOut;
+  int cuDimOut;
+};
+
+struct MmkRecord {
+  int posDim;
+  int dim;
+  int cuDim;
+};
+
 const int TILEDIM = 32;
 const int TILEROWS = 8;
 
 // Arguments for transposeTensorKernel
 // Enough to support tensors of rank 200 or so.
-const int transposeArgSize = 2048 - 5 - 2*2;
+const int transposeArgSize = 2048 - 6 - 2*3;
 __constant__ int transposeArg[transposeArgSize];
 
+//
+// Transpose when the lead dimension is different e.g. (1, 2, 3) -> (2, 1, 3)
+//
+//  dim3 numthread(TILEDIM, TILEROWS, 1);
+//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+//
 template <typename T>
 __global__ void transposeTensorKernelArg(
-  const int volMbar, const int volMm, const int sizeMmk, const int sizeMbar,
+  const int volMbar,
+  // const int sizeMmk, 
+  const int sizeMbar,
+  const int2 readVol, const int2 writeVol,
   const int cuDimMk, const int cuDimMm,
-  const int3* __restrict__ gl_MbarOut,
+  const MbarRecord* __restrict__ gl_Mbar,
   const T* __restrict__ dataIn, T* __restrict__ dataOut) {
-  
+
   // Shared memory
   __shared__ T shTile[TILEDIM][TILEDIM+1];
 
   const int warpLane = threadIdx.x & (warpSize - 1);
-  int3 MbarOut;
+  MbarRecord Mbar;
   if (warpLane < sizeMbar) {
-    MbarOut = gl_MbarOut[warpLane];
+    Mbar = gl_Mbar[warpLane];
   }
 
-  int* dimMmkIn  = &transposeArg[0];
-  int* dimMmkOut = &transposeArg[sizeMmk];
+  // int* dimMmkIn  = &transposeArg[0];
+  // int* dimMmkOut = &transposeArg[sizeMmk];
 
   const int xin = blockIdx.x * TILEDIM + threadIdx.x;
   const int yin = blockIdx.y * TILEDIM + threadIdx.y;
@@ -36,19 +60,36 @@ __global__ void transposeTensorKernelArg(
   const int xout = blockIdx.x * TILEDIM + threadIdx.y;
   const int yout = blockIdx.y * TILEDIM + threadIdx.x;
 
+  // if (xin == 0 && yin == 0 && blockIdx.z == 0) {
+  //   printf("dimMmkIn %d %d dimMmkOut %d %d\n", dimMmkIn[0], dimMmkIn[1], dimMmkOut[0], dimMmkOut[1]);
+  //   printf("cuDimMk %d cuDimMm %d MbarIn %d %d %d MbarOut %d %d %d\n",
+  //     cuDimMk, cuDimMm, Mbar.posDimIn, Mbar.dimIn, Mbar.cuDimIn,
+  //     Mbar.posDimOut, Mbar.dimOut, Mbar.cuDimOut);
+  // }
+
   for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z)
   {
 
     // Read from global memory
     {
-      int pos0 = xin + yin*cuDimMk + blockz*volMm;
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockz/Mbar.posDimIn;
+        pos0 = (z % Mbar.dimIn)*Mbar.cuDimIn;
+      }
+#pragma unroll
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i);
+      }
+      pos0 += xin + yin*cuDimMk;
 
       __syncthreads();
 
       // Read data into shared memory tile
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMk;
-        if ((xin < dimMmkIn[0]) && (yin + j < dimMmkIn[1])) {
+        // if ((xin < dimMmkIn[0]) && (yin + j < dimMmkIn[1])) {
+        if ((xin < readVol.x) && (yin + j < readVol.y)) {
           shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
         }
       }
@@ -56,11 +97,10 @@ __global__ void transposeTensorKernelArg(
 
     // Write to global memory
     {
-
       int pos0 = 0;
       if (warpLane < sizeMbar) {
-        int z = blockz/MbarOut.x;
-        pos0 = (z % MbarOut.y)*MbarOut.z;
+        int z = blockz/Mbar.posDimOut;
+        pos0 = (z % Mbar.dimOut)*Mbar.cuDimOut;
       }
 #pragma unroll
       for (int i=16;i >= 1;i/=2) {
@@ -70,381 +110,585 @@ __global__ void transposeTensorKernelArg(
 
       __syncthreads();
 
-      // Write data into global memory
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMm;
-        if ((yout < dimMmkOut[0]) && (xout + j < dimMmkOut[1])) {
+        // if ((yout < dimMmkOut[0]) && (xout + j < dimMmkOut[1])) {
+        if ((yout < writeVol.x) && (xout + j < writeVol.y)) {
           dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
         }
       }
     }
 
   }
-
+  
 }
 
-#if 1
 //
+// Transpose when dimensions are combined
+//
+//  dim3 numthread(TILEDIM, TILEROWS, 1);
+//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
 //
 template <typename T>
-__global__ void transposeTensorKernel(
-  const int volMbar, const int rank, const int sizeMbar,
-  const int* __restrict__ permutation,
-  const int* __restrict__ Mm, const int* __restrict__ Mk,
-  const int* __restrict__ dim,
-  const int* __restrict__ dimMbarIn, const int* __restrict__ dimMbarOut,
-  const int* __restrict__ cuDimIn, const int* __restrict__ cuDimOut,
-  const int* __restrict__ cuDimMbarIn, const int* __restrict__ cuDimMbarOut,
-  const int* __restrict__ posDimMbarIn, const int* __restrict__ posDimMbarOut,
+__global__ void transposeTensorKernelArg_subTransp(
+  const int volMbar, const int sizeMmk, const int sizeMbar,
+  const int2 readVol, const int2 writeVol,
+  const int cuDimMk, const int cuDimMm,
+  const MbarRecord* __restrict__ gl_Mbar,
+  const MmkRecord* __restrict__ gl_Mmk,
   const T* __restrict__ dataIn, T* __restrict__ dataOut) {
-  
+
   // Shared memory
   __shared__ T shTile[TILEDIM][TILEDIM+1];
-  // __shared__ int shDimMbarIn[1];
-  // __shared__ int shCuDimMbarIn[1];
-  // __shared__ int shDimMbarOut[1];
-  // __shared__ int shCuDimMbarOut[1]; 
+  __shared__ T shTile2[TILEDIM][TILEDIM+1];
 
-  // const int warpLane = threadIdx.x & (warpSize - 1);
+  const int warpLane = threadIdx.x & (warpSize - 1);
+  MbarRecord Mbar;
+  if (warpLane < sizeMbar) {
+    Mbar = gl_Mbar[warpLane];
+  }
 
-  int MmVal = __ldg(&Mm[0]);
-  int MkVal = __ldg(&Mk[0]);
+  MmkRecord Mmk;
+  if (warpLane < sizeMmk) {
+    Mmk = gl_Mmk[warpLane];
+  }
 
-  for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z) {
+  // int* dimMmkIn  = &transposeArg[0];
+  // int* dimMmkOut = &transposeArg[sizeMmk];
 
+  const int xin = blockIdx.x * TILEDIM + threadIdx.x;
+  const int yin = blockIdx.y * TILEDIM + threadIdx.y;
+
+  const int xout = blockIdx.x * TILEDIM + threadIdx.y;
+  const int yout = blockIdx.y * TILEDIM + threadIdx.x;
+
+  // if (xin == 0 && yin == 0 && blockIdx.z == 0) {
+  //   printf("dimMmkIn %d %d dimMmkOut %d %d\n", dimMmkIn[0], dimMmkIn[1], dimMmkOut[0], dimMmkOut[1]);
+  //   printf("cuDimMk %d cuDimMm %d MbarIn %d %d %d MbarOut %d %d %d\n",
+  //     cuDimMk, cuDimMm, Mbar.posDimIn, Mbar.dimIn, Mbar.cuDimIn,
+  //     Mbar.posDimOut, Mbar.dimOut, Mbar.cuDimOut);
+  // }
+
+  for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z)
   {
-    // Read position
-    const int x = blockIdx.x * TILEDIM + threadIdx.x;
-    const int y = blockIdx.y * TILEDIM + threadIdx.y;
 
-    int dimMmk[2];
-    dimMmk[0] = __ldg(&dim[MmVal]);
-    dimMmk[1] = __ldg(&dim[MkVal]);
-
-#if 1
-    int cuDimMk = __ldg(&cuDimIn[MkVal]);
-    int pos0 = x + y*cuDimMk;
-    int z = blockz;
-    for (int i=0;i < sizeMbar;i++) {
-      int dimMbarVal = __ldg(&dimMbarIn[i]);
-      pos0 += (z % dimMbarVal)*__ldg(&cuDimMbarIn[i]);
-      z /= dimMbarVal;
-    }
-#else
-    int cuDimMk = cuDimIn[Mk[0]];
-    int pos0 = 0;
-    if (warpLane < sizeMbar) {
-      int z = blockIdx.z/posDimMbarIn[warpLane];
-      pos0 = (z % dimMbarIn[warpLane])*cuDimMbarIn[warpLane];
-    }
+    // Read from global memory
+    {
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockz/Mbar.posDimIn;
+        pos0 = (z % Mbar.dimIn)*Mbar.cuDimIn;
+      }
 #pragma unroll
-    for (int i=16;i >= 1;i/=2) {
-      pos0 += __shfl_xor(pos0, i, 32);
-    }
-    pos0 += x + y*cuDimMk;
-#endif
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i);
+      }
+      pos0 += xin + yin*cuDimMk;
 
-    __syncthreads();
+      __syncthreads();
 
-    // Read data into shared memory tile
-    if (x < dimMmk[0]) {
+      // Read data into shared memory tile
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMk;
-        // if ((x < dimMmk[0]) && (y + j < dimMmk[1]))
-        if (y + j < dimMmk[1])
+        if ((xin < readVol.x) && (yin + j < readVol.y)) {
           shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
+        }
       }
     }
-  }
 
-  {
-    // Write position
-    const int x = blockIdx.x * TILEDIM + threadIdx.y;
-    const int y = blockIdx.y * TILEDIM + threadIdx.x;
-
-    int dimMmk[2];
-    dimMmk[0] = dim[permutation[MkVal]];
-    dimMmk[1] = dim[permutation[MmVal]];
-
-#if 1
-    int cuDimMm = cuDimOut[MmVal];
-    int pos0 = y + x*cuDimMm;
-    int z = blockz;
-    for (int i=0;i < sizeMbar;i++) {
-      int dimMbarVal = dimMbarOut[i];
-      pos0 += (z % dimMbarVal)*cuDimMbarOut[i];
-      z /= dimMbarVal;
-    }
-#else
-    int cuDimMm = cuDimOut[Mm[0]];
-    int pos0 = 0;
-    if (warpLane < sizeMbar) {
-      int z = blockIdx.z/posDimMbarOut[warpLane];
-      pos0 = (z % dimMbarOut[warpLane])*cuDimMbarOut[warpLane];
-    }
+    // Transpose within tile
+    int* shTile2p = (int *)shTile2;
+    for (int j=0;j < TILEDIM;j += TILEROWS) {
+      // Read from (threadIdx.x, threadIdx.y + j)
+      T val = shTile[threadIdx.y + j][threadIdx.x];
+      int xy = threadIdx.x + (threadIdx.y + j)*TILEDIM;
+      // Break down xy to calculate output address
+      int pos = 0;
+      if (warpLane < sizeMmk) {
+        int p = xy/Mmk.posDim;
+        pos = (p % Mmk.dim)*Mmk.cuDim;
+      }
 #pragma unroll
-    for (int i=16;i >= 1;i/=2) {
-      pos0 += __shfl_xor(pos0, i, 32);
+      for (int i=16;i >= 1;i/=2) {
+        pos += __shfl_xor(pos, i);
+      }
+      // Write to shared memory
+      shTile2p[pos] = val;
     }
-    pos0 += y + x*cuDimMm;
-#endif
 
-    __syncthreads();
+    // Write to global memory
+    {
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockz/Mbar.posDimOut;
+        pos0 = (z % Mbar.dimOut)*Mbar.cuDimOut;
+      }
+#pragma unroll
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i);
+      }
+      pos0 += yout + xout*cuDimMm;
 
-    // Write data into global memory
-    if (y < dimMmk[0]) {
+      __syncthreads();
+
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMm;
-        // if ((y < dimMmk[0]) && (x + j < dimMmk[1]))
-        if (x + j < dimMmk[1])
-          dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
+        if ((yout < writeVol.x) && (xout + j < writeVol.y)) {
+          dataOut[pos] = shTile2[threadIdx.x][threadIdx.y + j];
+        }
       }
     }
+
   }
+  
+}
+
+//
+// Transpose when the lead dimension is the same, e.g. (1, 2, 3) -> (1, 3, 2)
+//
+//  dim3 numthread(TILEDIM, TILEROWS, 1);
+//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+//
+template <typename T>
+__global__ void transposeTensorKernelArg_leadDimSame(
+  const int volMbar, const int sizeMbar,
+  const int cuDimMk, const int cuDimMm,
+  const MbarRecord* __restrict__ gl_Mbar,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  const int warpLane = threadIdx.x & (warpSize - 1);
+  MbarRecord Mbar;
+  if (warpLane < sizeMbar) {
+    Mbar = gl_Mbar[warpLane];
   }
 
+  int* dimMmkIn  = &transposeArg[0];
+
+  const int x = blockIdx.x * TILEDIM + threadIdx.x;
+  const int y = blockIdx.y * TILEDIM + threadIdx.y;
+
+  // if (x == 0 && y == 0 && blockIdx.z == 0) {
+  //   printf("cuDimMk %d cuDimMm %d volMmk %d MbarOut %d %d %d\n",
+  //     cuDimMk, cuDimMm, volMmk, MbarOut.x, MbarOut.y, MbarOut.z);
+  // }
+
+  for (int blockz=blockIdx.z;blockz < volMbar;blockz += blockDim.z*gridDim.z)
+  {
+
+    // Variable where values are stored
+    T val[TILEDIM/TILEROWS];
+
+    // Read global memory
+    {
+    // int posIn0 = x + y*cuDimMk + blockz*volMmk;
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockz/Mbar.posDimIn;
+        pos0 = (z % Mbar.dimIn)*Mbar.cuDimIn;
+      }
+#pragma unroll
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i);
+      }
+      pos0 += x + y*cuDimMk;
+
+#pragma unroll
+      for (int j=0;j < TILEDIM;j += TILEROWS) {
+        int pos  = pos0  + j*cuDimMk;
+        if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
+          val[j/TILEROWS] = dataIn[pos];
+        }
+      }
+    }
+
+    // Write global memory
+    {
+      int pos0 = 0;
+      if (warpLane < sizeMbar) {
+        int z = blockz/Mbar.posDimOut;
+        pos0 = (z % Mbar.dimOut)*Mbar.cuDimOut;
+      }
+#pragma unroll
+      for (int i=16;i >= 1;i/=2) {
+        pos0 += __shfl_xor(pos0, i);
+      }
+      pos0 += x + y*cuDimMm;
+
+#pragma unroll
+      for (int j=0;j < TILEDIM;j += TILEROWS) {
+        int pos = pos0 + j*cuDimMm;
+        if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
+          dataOut[pos] = val[j/TILEROWS];
+        }
+      }
+    }
+
+  }
+  
 }
-#endif
 
 class TensorTransposePlan {
-private:
-  int* data;
-
 public:
   // Rank of the tensor
   const int rank;
   // Input volume
+  int sizeMm;
   int volMm;
   // Output volume
+  int sizeMk;
   int volMk;
+  // {Input} U {Output}
+  int sizeMmk;
+  int volMmk;
   // Remaining volume
   int sizeMbar;
   int volMbar;
 
-  int sizeMmk;
   int cuDimMk;
   int cuDimMm;
 
-  // Sizes:
-  // Mm           [1]
-  // Mk           [1]
-  // permutation  [rank]
-  // dim          [rank]
-  // cuDimIn      [rank]
-  // cuDimOut     [rank]
-  // dimMbarIn    [rank - 2]
-  // dimMbarOut   [rank - 2]
-  // cuDimMbarIn  [rank - 2]
-  // cuDimMbarOut [rank - 2]
-  // posDimMbarIn  [rank - 2]
-  // posDimMbarOut [rank - 2]
+  bool leadDimSame;
 
-  // Pointers to data
-  int* Mm;
-  int* Mk;
-  int* permutation;
-  int* dim;
-  int* cuDimIn;
-  int* cuDimOut;
-  int* dimMbarIn;
-  int* dimMbarOut;
-  int* cuDimMbarIn;
-  int* cuDimMbarOut;
-  int* posDimMbarIn;
-  int* posDimMbarOut;
+  bool subTransp;
 
-  // MbarOut 3x[rank - 2]
-  int3* MbarOut;
+  int2 readVol;
+  int2 writeVol;
+
+  // sizeMbar
+  MbarRecord* Mbar;
+
+  // sizeMmk
+  MmkRecord* Mmk;
 
   static int getDataSize(const int rank) {
     return (2 + 4*rank + 6*(rank - 2));
   }
 
-  TensorTransposePlan(const int rank, const int* in_dim, const int* in_permutation) : rank(rank) {
+  TensorTransposePlan(const int rank, const int* dim, const int* permutation) : rank(rank) {
 
-    allocate_device<int>(&data, getDataSize(rank));
-    allocate_device<int3>(&MbarOut, rank-2);
+    leadDimSame = false;
+    subTransp = false;
 
-    // Calculate pointers
-    Mm           = data;
-    Mk           = Mm + 1;
-    permutation  = Mk + 1;
-    dim          = permutation  + rank;
-    cuDimIn      = dim          + rank;
-    cuDimOut     = cuDimIn      + rank;
-    dimMbarIn    = cuDimOut     + rank;
-    dimMbarOut   = dimMbarIn    + rank - 2;
-    cuDimMbarIn  = dimMbarOut   + rank - 2;
-    cuDimMbarOut = cuDimMbarIn  + rank - 2;
-    posDimMbarIn = cuDimMbarOut + rank - 2;
-    posDimMbarOut = posDimMbarIn+ rank - 2;
-
-    bool* isMmk = new bool[rank];
+    bool* isMm = new bool[rank];
+    bool* isMk = new bool[rank];
     int* inv_permutation = new int[rank];
     for (int i=0;i < rank;i++) {
-      isMmk[i] = false;
-      inv_permutation[in_permutation[i]] = i;
+      isMm[i] = false;
+      isMk[i] = false;
+      inv_permutation[permutation[i]] = i;
     }
 
-    int* tmp_Mm = new int[1];
-    int* tmp_Mk = new int[1];
-    int* tmp_cuDimIn = new int[rank];
-    int* tmp_cuDimOut = new int[rank];
-    int* tmp_dimMbarIn = new int[rank - 2];
-    int* tmp_dimMbarOut = new int[rank - 2];
-    int* tmp_cuDimMbarIn = new int[rank - 2];
-    int* tmp_cuDimMbarOut = new int[rank - 2];
-    int* tmp_posDimMbarIn = new int[rank - 2];
-    int* tmp_posDimMbarOut = new int[rank - 2];
-
-    tmp_Mm[0] = 0;
-    volMm = in_dim[tmp_Mm[0]];
-    isMmk[tmp_Mm[0]] = true;
-
-    if (in_permutation[0] == 0) {
-      tmp_Mk[0] = in_permutation[1];
-    } else {
-      tmp_Mk[0] = in_permutation[0];
+    // Setup Mm
+    sizeMm = 0;
+    volMm = 1;
+    while (sizeMm < rank && volMm < TILEDIM) {
+    // while (sizeMm < rank && volMm < 2) {
+      isMm[sizeMm] = true;
+      volMm *= dim[sizeMm++];
     }
-    volMk = in_dim[tmp_Mk[0]];
-    isMmk[tmp_Mk[0]] = true;
 
-    tmp_cuDimIn[0] = 1;
-    for (int i=1;i < rank;i++) {
-      tmp_cuDimIn[i] = tmp_cuDimIn[i-1]*in_dim[i-1];
+    // Setup Mk
+    int r = 0;
+    sizeMk = 0;
+    volMk = 1;
+    while (r < rank && volMk < TILEDIM) {
+    // while (r < rank && volMk < 2) {
+      if (leadDimSame) {
+        isMk[r] = true;
+        volMk *= dim[r];
+        sizeMk++;
+      } else {
+        int pr = permutation[r];
+        if (isMm[pr]) {
+          leadDimSame = true;
+        } else {
+          isMk[pr] = true;
+          volMk *= dim[pr];
+          sizeMk++;
+        }
+      }
+      r++;
     }
+
+    int* tmp_Mm = new int[sizeMm];
+    int* tmp_Mk = new int[sizeMk];
+    int iMm = 0;
+    int iMk = 0;
     for (int i=0;i < rank;i++) {
-      tmp_cuDimOut[i] = tmp_cuDimIn[inv_permutation[i]];
+      if (isMm[i]) {
+        tmp_Mm[iMm++] = i;
+      }
+      if (isMk[i]) {
+        tmp_Mk[iMk++] = i;
+      }
     }
 
-    volMbar = 1;
+    // Setup Mmk
+    sizeMmk = 0;
     sizeMbar = 0;
-    int prev_posDimMbarIn  = 1;
-    int prev_posDimMbarOut = 1;
+    volMbar = 1;
+    volMmk = 1;
     for (int i=0;i < rank;i++) {
-      if (!isMmk[i]) {
-        volMbar *= in_dim[i];
-        tmp_dimMbarIn[sizeMbar]    = in_dim[i];
-        tmp_dimMbarOut[sizeMbar]   = in_dim[in_permutation[i]];
-        tmp_cuDimMbarIn[sizeMbar]  = tmp_cuDimIn[i];
-        tmp_cuDimMbarOut[sizeMbar] = tmp_cuDimOut[i];
-        tmp_posDimMbarIn[sizeMbar]  = prev_posDimMbarIn;
-        tmp_posDimMbarOut[sizeMbar] = prev_posDimMbarOut;
-        prev_posDimMbarIn  *= tmp_dimMbarIn[sizeMbar];
-        prev_posDimMbarOut *= tmp_dimMbarOut[sizeMbar];
+      if (isMm[i] || isMk[i]) {
+        volMmk *= dim[i];
+        sizeMmk++;
+      } else {
+        volMbar *= dim[i];
         sizeMbar++;
       }
     }
 
-    // ----------------------------------------------------------------------
-    // For arg -version
-    sizeMmk = 2;
+    int* tmp_cuDimIn = new int[rank];
+    int* tmp_cuDimOut = new int[rank];
+    tmp_cuDimIn[0] = 1;
+    for (int i=1;i < rank;i++) {
+      tmp_cuDimIn[i] = tmp_cuDimIn[i-1]*dim[i-1];
+    }
+    tmp_cuDimOut[0] = 1;
+    for (int i=1;i < rank;i++) {
+      tmp_cuDimOut[i] = tmp_cuDimOut[i-1]*dim[permutation[i-1]];
+    }
+
     cuDimMk = tmp_cuDimIn[tmp_Mk[0]];
-    cuDimMm = tmp_cuDimOut[tmp_Mm[0]];
+    if (leadDimSame) {
+      cuDimMm = tmp_cuDimOut[inv_permutation[tmp_Mk[0]]];
+    } else {
+      cuDimMm = tmp_cuDimOut[inv_permutation[tmp_Mm[0]]];
+    }
+
+    MbarRecord* hostMbar = NULL;
+    if (sizeMbar > 0) {
+      hostMbar = new MbarRecord[sizeMbar];
+      int* tmp = new int[rank];
+      int prev_posDimMbarIn  = 1;
+      int iMbar = 0;
+      for (int i=0;i < rank;i++) {
+        if (!(isMm[i] || isMk[i])) {
+          tmp[i] = prev_posDimMbarIn;
+          hostMbar[iMbar].posDimIn = prev_posDimMbarIn;
+          hostMbar[iMbar].dimIn    = dim[i];
+          hostMbar[iMbar].cuDimIn  = tmp_cuDimIn[i];
+          prev_posDimMbarIn *= hostMbar[iMbar].dimIn;
+          iMbar++;
+        }
+      }
+
+      iMbar = 0;
+      for (int i=0;i < rank;i++) {
+        int pi = permutation[i];
+        if (!(isMm[pi] || isMk[pi])) {
+          hostMbar[iMbar].posDimOut = tmp[pi];
+          hostMbar[iMbar].dimOut    = dim[pi];
+          hostMbar[iMbar].cuDimOut  = tmp_cuDimOut[i];
+          iMbar++;
+        }
+      }
+
+      delete [] tmp;
+    }
 
     int* tmp_dimMmkIn = new int[sizeMmk];
-    tmp_dimMmkIn[0] = in_dim[tmp_Mm[0]];
-    tmp_dimMmkIn[1] = in_dim[tmp_Mk[0]];    
+    tmp_dimMmkIn[0] = dim[tmp_Mm[0]];
+    tmp_dimMmkIn[1] = dim[tmp_Mk[0]];
+
+    readVol.x = 1;
+    readVol.y = 1;
+    for (int i=0;i < sizeMm;i++) {
+      readVol.x *= dim[tmp_Mm[i]];
+    }
+    for (int i=0;i < sizeMk;i++) {
+      readVol.y *= dim[tmp_Mk[i]];
+    }
 
     int* tmp_dimMmkOut = new int[sizeMmk];
-    tmp_dimMmkOut[0] = in_dim[in_permutation[tmp_Mk[0]]];
-    tmp_dimMmkOut[1] = in_dim[in_permutation[tmp_Mm[0]]];
+    int j = 0;
+    for (int i=0;i < rank;i++) {
+      int pi = permutation[i];
+      if (isMm[pi] || isMk[pi]) {
+        tmp_dimMmkOut[j] = dim[pi];
+        j++;
+      }
+    }
+
+    writeVol.x = 1;
+    writeVol.y = 1;
+    for (int i=0;i < rank;i++) {
+      int pi = permutation[i];
+      if (isMm[pi]) {
+        writeVol.x *= dim[pi];
+      }
+      if (isMk[pi]) {
+        writeVol.y *= dim[pi];
+      }
+    }
+
+#if 1
+    printf("Mm");
+    for (int i = 0; i < sizeMm; ++i) printf(" %d", tmp_Mm[i]+1);
+    printf(" volMm %d\n", volMm);
+
+    printf("Mk");
+    for (int i = 0; i < sizeMk; ++i) printf(" %d", tmp_Mk[i]+1);
+    printf(" volMk %d\n", volMk);
+
+    printf("Mmk");
+    for (int i = 0; i < rank; ++i) if (isMm[i] || isMk[i]) printf(" %d", i+1);
+    printf(" volMmk %d\n", volMmk);
+
+    if (sizeMbar > 0) {
+      printf("Mbar");
+      for (int i = 0; i < rank; ++i) if (!(isMm[i] || isMk[i])) printf(" %d", i+1);
+      printf(" volMbar %d\n", volMbar);
+    }
+
+    printf("cuDimIn ");
+    for (int i=0;i < rank;i++) printf("%d ", tmp_cuDimIn[i]);
+    printf("\n");
+
+    printf("cuDimOut ");
+    for (int i=0;i < rank;i++) printf("%d ", tmp_cuDimOut[i]);
+    printf("\n");
+
+    printf("cuDimMk %d cuDimMm %d\n", cuDimMk, cuDimMm);
+
+    if (sizeMbar > 0) {
+      printf("MbarIn\n");
+      for (int i=0;i < sizeMbar;i++) printf("%d %d %d\n",
+        hostMbar[i].posDimIn, hostMbar[i].dimIn, hostMbar[i].cuDimIn);
+
+      printf("MbarOut\n");
+      for (int i=0;i < sizeMbar;i++) printf("%d %d %d\n",
+        hostMbar[i].posDimOut, hostMbar[i].dimOut, hostMbar[i].cuDimOut);
+    }
+
+    printf("readVol %d %d writeVol %d %d\n", readVol.x, readVol.y, writeVol.x, writeVol.y);
+#endif
 
     int* h_transposeArg = new int[transposeArgSize];
     int iarg = 0;
     for (int j=0;j < sizeMmk;j++) h_transposeArg[iarg++] = tmp_dimMmkIn[j];
     for (int j=0;j < sizeMmk;j++) h_transposeArg[iarg++] = tmp_dimMmkOut[j];
-    for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_dimMbarOut[j];
-    for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_cuDimMbarOut[j];
-    for (int j=0;j < sizeMbar;j++) h_transposeArg[iarg++] = tmp_posDimMbarOut[j];
-
-    cudaCheck(cudaDeviceSynchronize());
 
     cudaCheck(cudaMemcpyToSymbol(transposeArg, h_transposeArg,
       transposeArgSize*sizeof(int), 0, cudaMemcpyHostToDevice));
 
-    cudaCheck(cudaDeviceSynchronize());
+    // Check for sub-transpose
+    MmkRecord* hostMmk = NULL;
+    if (sizeMm > 1 || sizeMk > 1) {
+      // We need sub-transpose if the order within Mm and Mk changes
+      int* tmp_MmOut = new int[sizeMm];
+      int jm = 0;
+      for (int i=0;i < rank;i++) {
+        int pi = permutation[i];
+        if (isMm[pi]) {
+          tmp_MmOut[jm++] = pi;
+        }
+      }
+      bool Mm_order_changes = false;
+      for (int i=0;i < sizeMm;i++) {
+        if (tmp_Mm[i] != tmp_MmOut[i]) {
+          Mm_order_changes = true;
+          break;
+        }
+      }
+
+      int* tmp_MkOut = new int[sizeMk];
+      int jk = 0;
+      for (int i=0;i < rank;i++) {
+        int pi = permutation[i];
+        if (isMk[pi]) {
+          tmp_MkOut[jk++] = pi;
+        }
+      }
+      bool Mk_order_changes = false;
+      for (int i=0;i < sizeMk;i++) {
+        if (tmp_Mk[i] != tmp_MkOut[i]) {
+          Mk_order_changes = true;
+          break;
+        }
+      }
+
+      subTransp = (Mm_order_changes || Mk_order_changes);
+      
+      if (subTransp) {
+        hostMmk = new MmkRecord[sizeMmk];
+        int* tmp = new int[rank];
+        int prev_posDim = 1;
+        int prev_cuDim = 1;
+        int j = 0;
+        // Mm
+        for (int i=0;i < sizeMm;i++) {
+          tmp[tmp_Mm[i]] = prev_posDim;
+          hostMmk[j].dim   = dim[tmp_MmOut[i]];
+          hostMmk[j].cuDim = prev_cuDim;
+          prev_cuDim *= hostMmk[j].dim;
+          prev_posDim *= dim[tmp_Mm[i]];
+          j++;
+        }
+        // Mk
+        for (int i=0;i < sizeMk;i++) {
+          tmp[tmp_Mk[i]] = prev_posDim;
+          hostMmk[j].dim   = dim[tmp_MkOut[i]];
+          hostMmk[j].cuDim = prev_cuDim;
+          prev_cuDim *= hostMmk[j].dim;
+          prev_posDim *= dim[tmp_Mk[i]];
+          j++;
+        }
+        j = 0;
+        // Mm
+        for (int i=0;i < sizeMm;i++) {
+          hostMmk[j].posDim = tmp[tmp_MmOut[i]];
+          j++;
+        }
+        // Mk
+        for (int i=0;i < sizeMk;i++) {
+          hostMmk[j].posDim = tmp[tmp_MkOut[i]];
+          j++;
+        }
+        delete [] tmp;
+      }
+
+      delete [] tmp_MmOut;
+      delete [] tmp_MkOut;
+    }
 
     delete [] tmp_dimMmkIn;
     delete [] tmp_dimMmkOut;
     delete [] h_transposeArg;
-    // ----------------------------------------------------------------------
 
-#if 0
-    printf("tmp_Mm %d\n", tmp_Mm[0]);
-    printf("tmp_Mk %d\n", tmp_Mk[0]);
-
-    printf("tmp_cuDimIn\n");
-    for (int r=0;r < rank;r++) {
-      printf("%d ", tmp_cuDimIn[r]);
-    }
-    printf("\n");
-
-    printf("tmp_cuDimOut\n");
-    for (int r=0;r < rank;r++) {
-      printf("%d ", tmp_cuDimOut[r]);
-    }
-    printf("\n");
-
-    printf("tmp_cuDimMbarIn\n");
-    for (int r=0;r < sizeMbar;r++) {
-      printf("%d ", tmp_cuDimMbarIn[r]);
-    }
-    printf("\n");
-
-    printf("tmp_cuDimMbarOut\n");
-    for (int r=0;r < sizeMbar;r++) {
-      printf("%d ", tmp_cuDimMbarOut[r]);
-    }
-    printf("\n");
-#endif
-
-    delete [] isMmk;
+    delete [] isMm;
+    delete [] isMk;
     delete [] inv_permutation;
-
-    int* hostData = new int[getDataSize(rank)];
-    int i = 0;
-    hostData[i++] = tmp_Mm[0];
-    hostData[i++] = tmp_Mk[0];
-    for (int j=0;j < rank;j++) hostData[i++] = in_permutation[j];
-    for (int j=0;j < rank;j++) hostData[i++] = in_dim[j];
-    for (int j=0;j < rank;j++) hostData[i++] = tmp_cuDimIn[j];
-    for (int j=0;j < rank;j++) hostData[i++] = tmp_cuDimOut[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_dimMbarIn[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_dimMbarOut[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_cuDimMbarIn[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_cuDimMbarOut[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_posDimMbarIn[j];
-    for (int j=0;j < rank - 2;j++) hostData[i++] = tmp_posDimMbarOut[j];
-
-    int3* hostMbarOut = new int3[rank-2];
-    for (int j=0;j < rank - 2;j++) {
-      hostMbarOut[j].x = tmp_posDimMbarOut[j];
-      hostMbarOut[j].y = tmp_dimMbarOut[j];
-      hostMbarOut[j].z = tmp_cuDimMbarOut[j];
-    }
 
     delete [] tmp_Mm;
     delete [] tmp_Mk;
     delete [] tmp_cuDimIn;
     delete [] tmp_cuDimOut;
-    delete [] tmp_dimMbarIn;
-    delete [] tmp_dimMbarOut;
-    delete [] tmp_cuDimMbarIn;
-    delete [] tmp_cuDimMbarOut;
-    delete [] tmp_posDimMbarIn;
-    delete [] tmp_posDimMbarOut;
+    // delete [] tmp_dimMbarIn;
+    // delete [] tmp_dimMbarOut;
+    // delete [] tmp_cuDimMbarIn;
+    // delete [] tmp_cuDimMbarOut;
+    // delete [] tmp_posDimMbarIn;
+    // delete [] tmp_posDimMbarOut;
 
-    copy_HtoD_sync<int>(hostData, data, getDataSize(rank));
-    copy_HtoD_sync<int3>(hostMbarOut, MbarOut, rank-2);
+    if (sizeMbar > 0) {
+      allocate_device<MbarRecord>(&Mbar, sizeMbar);
+      copy_HtoD_sync<MbarRecord>(hostMbar, Mbar, sizeMbar);
+      delete [] hostMbar;
+    }
 
-    delete [] hostData;
-    delete [] hostMbarOut;
+    if (subTransp) {
+      allocate_device<MmkRecord>(&Mmk, sizeMmk);
+      copy_HtoD_sync<MmkRecord>(hostMmk, Mmk, sizeMmk);
+      delete [] hostMmk;
+    }
+
+    cudaCheck(cudaDeviceSynchronize());
   }
 
   ~TensorTransposePlan() {
-    deallocate_device<int>(&data);
-    deallocate_device<int3>(&MbarOut);
+    if (sizeMbar > 0) deallocate_device<MbarRecord>(&Mbar);
+    if (subTransp) deallocate_device<MmkRecord>(&Mmk);
   }
 };
 
@@ -454,39 +698,27 @@ void transposeTensorArg(TensorTransposePlan& plan,
 
   dim3 numthread(TILEDIM, TILEROWS, 1);
   dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
-  numblock.z = 256;
+  numblock.z = min(256, plan.volMbar);
   numblock.z = min(65535, numblock.z);
 
-  transposeTensorKernelArg<T> <<< numblock, numthread, 0, stream >>>
-  (plan.volMbar, plan.volMm, plan.sizeMmk, plan.sizeMbar, plan.cuDimMk, plan.cuDimMm,
-    plan.MbarOut,
-    dataIn, dataOut);
+  if (plan.leadDimSame) {
+    transposeTensorKernelArg_leadDimSame<T> <<< numblock, numthread, 0, stream >>>
+    (plan.volMbar, plan.sizeMbar, plan.cuDimMk, plan.cuDimMm,
+      plan.Mbar, dataIn, dataOut);
+  } else {
+    if (plan.subTransp) {
+      transposeTensorKernelArg_subTransp<T> <<< numblock, numthread, 0, stream >>>
+      (plan.volMbar, plan.sizeMmk, plan.sizeMbar, plan.readVol, plan.writeVol, plan.cuDimMk, plan.cuDimMm,
+        plan.Mbar, plan.Mmk, dataIn, dataOut);
+    } else {
+      transposeTensorKernelArg<T> <<< numblock, numthread, 0, stream >>>
+      (plan.volMbar, plan.sizeMbar, plan.readVol, plan.writeVol, plan.cuDimMk, plan.cuDimMm,
+        plan.Mbar, dataIn, dataOut);
+    }
+  }
 
   cudaCheck(cudaGetLastError());
 }
-
-#if 1
-template <typename T>
-void transposeTensor(TensorTransposePlan& plan,
-  const T* dataIn, T* dataOut, cudaStream_t stream) {
-
-  dim3 numthread(TILEDIM, TILEROWS, 1);
-  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
-  numblock.z = min(65535, numblock.z);
-
-  transposeTensorKernel<T> <<< numblock, numthread, 0, stream >>>
-  (plan.volMbar, plan.rank, plan.sizeMbar,
-    plan.permutation,
-    plan.Mm, plan.Mk,
-    plan.dim, plan.dimMbarIn, plan.dimMbarOut,
-    plan.cuDimIn, plan.cuDimOut,
-    plan.cuDimMbarIn, plan.cuDimMbarOut,
-    plan.posDimMbarIn, plan.posDimMbarOut,
-    dataIn, dataOut);
-
-  cudaCheck(cudaGetLastError());
-}
-#endif
 
 // ----------------------------------------------------------------------------
 //
