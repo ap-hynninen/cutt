@@ -34,15 +34,15 @@ endif
 
 GENCODE_SM35  := -gencode arch=compute_35,code=sm_35
 GENCODE_SM50  := -gencode arch=compute_50,code=sm_50
-GENCODE_FLAGS := $(GENCODE_SM35)
-#$(GENCODE_SM50)
+GENCODE_FLAGS := $(GENCODE_SM50)
+#$(GENCODE_SM35)
 
 # CUDA_CFLAGS = flags for compiling with CUDA
 # CUDA_LFLAGS = flags for linking with CUDA
 
 #CFLAGS = -std=gnu++11
 
-CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) -Xcompiler "$(CFLAGS)"
+CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CFLAGS)"
 
 ifeq ($(OS),linux)
 CUDA_LFLAGS = -L$(CUDAROOT)/lib64
