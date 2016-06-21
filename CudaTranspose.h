@@ -156,63 +156,6 @@ __global__ void transposeTensorKernelArg_general(
 
   // Pre-compute tensor positions in Mmk
   // 3*nloopVolMmk registers
-#if 0
-  int posMmkIn[nloopVolMmk];
-  int posMmkOut[nloopVolMmk];
-#pragma unroll
-  for (int j=0;j < nloopVolMmk;j++) {
-    posMmkIn[j] = 0;
-    posMmkOut[j] = 0;
-  }
-  for (int i=0;i < sizeMmk;i++) {
-#pragma unroll
-    for (int j=0;j < nloopVolMmk;j++) {
-      posMmkIn[j] += (((threadIdx.x + j*blockDim.x)/__shfl(Mmk.c_in,i)) % __shfl(Mmk.d_in,i))*__shfl(Mmk.ct_in,i);
-      posMmkOut[j] += (((threadIdx.x + j*blockDim.x)/__shfl(Mmk.c_out,i)) % __shfl(Mmk.d_out,i))*__shfl(Mmk.ct_out,i);
-    }
-  }
-
-  const int posTableSize = (nloopVolMmk - 1)/2 + 1;
-  int posSh[posTableSize];
-#pragma unroll
-  for (int j=0;j < posTableSize;j++) {
-    posSh[j] = 0;
-  }
-  for (int i=0;i < sizeMmk;i++) {
-#pragma unroll
-    for (int j=0;j < posTableSize;j++) {
-      posSh[j] += (((threadIdx.x + j*2*blockDim.x)/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i);
-      posSh[j] += ((((threadIdx.x + (j*2+1)*blockDim.x)/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i)) << 16;
-    }
-  }
-
-//   const int posTableSize = (nloopVolMmk - 1)/2 + 1;
-//   int posMmkIn[nloopVolMmk];
-//   int posMmkOut[nloopVolMmk];
-//   int posSh[posTableSize];
-// #pragma unroll
-//   for (int j=0;j < nloopVolMmk;j++) {
-//     posMmkIn[j] = 0;
-//     posMmkOut[j] = 0;
-//   }
-// #pragma unroll
-//   for (int j=0;j < posTableSize;j++) {
-//     posSh[j] = 0;
-//   }
-//   for (int i=0;i < sizeMmk;i++) {
-// #pragma unroll
-//     for (int j=0;j < nloopVolMmk;j++) {
-//       posMmkIn[j] += (((threadIdx.x + j*blockDim.x)/__shfl(Mmk.c_in,i)) % __shfl(Mmk.d_in,i))*__shfl(Mmk.ct_in,i);
-//       posMmkOut[j] += (((threadIdx.x + j*blockDim.x)/__shfl(Mmk.c_out,i)) % __shfl(Mmk.d_out,i))*__shfl(Mmk.ct_out,i);
-//     }
-// #pragma unroll
-//     for (int j=0;j < posTableSize;j++) {
-//       posSh[j] += (((threadIdx.x + j*2*blockDim.x)/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i);
-//       posSh[j] += ((((threadIdx.x + (j*2+1)*blockDim.x)/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i)) << 16;
-//     }
-//   }
-
-#else
   int posMmkIn[nloopVolMmk];
   int posMmkOut[nloopVolMmk];
   int posSh[nloopVolMmk];
@@ -230,7 +173,6 @@ __global__ void transposeTensorKernelArg_general(
       posSh[j] += (((threadIdx.x + j*blockDim.x)/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i);
     }
   }
-#endif
 
   // 6 registers
   TensorConvInOut Mbar;
@@ -245,305 +187,50 @@ __global__ void transposeTensorKernelArg_general(
   for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += blockDim.z*gridDim.z)
   {
 
+    int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMbarOut += __shfl_xor(posMbarOut, i);
+    }
+
     // Read from global memory
-    {
-      // int posMbarIn = tensorPos(posMbar, sizeMbar, Mbar.c_in, Mbar.d_in, Mbar.ct_in);
-      int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+    // int posMbarIn = tensorPos(posMbar, sizeMbar, Mbar.c_in, Mbar.d_in, Mbar.ct_in);
+    int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
 #pragma unroll
-      for (int i=16;i >= 1;i/=2) {
-        posMbarIn += __shfl_xor(posMbarIn, i);
-      }
+    for (int i=16;i >= 1;i/=2) {
+      posMbarIn += __shfl_xor(posMbarIn, i);
+    }
 
-      __syncthreads();
+    __syncthreads();
 
 #pragma unroll
-      for (int j=0;j < nloopVolMmk;j++) {
-        int posMmk = threadIdx.x + j*blockDim.x;
-        int posIn = posMbarIn + posMmkIn[j];
-        if (posMmk < volMmk) shBuffer[posMmk] = dataIn[posIn];
-      }
-
+    for (int j=0;j < nloopVolMmk;j++) {
+      int posMmk = threadIdx.x + j*blockDim.x;
+      int posIn = posMbarIn + posMmkIn[j];
+      if (posMmk < volMmk) shBuffer[posMmk] = dataIn[posIn];
     }
 
     // Write to global memory
-    {
       // int posMbarOut = tensorPos(posMbar, sizeMbar, Mbar.c_out, Mbar.d_out, Mbar.ct_out);
-      int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
-#pragma unroll
-      for (int i=16;i >= 1;i/=2) {
-        posMbarOut += __shfl_xor(posMbarOut, i);
-      }
-
-      __syncthreads();
-
-#if 0
-#pragma unroll
-      for (int j=0;j < posTableSize;j++) {
-        int posMmk = threadIdx.x + j*2*blockDim.x;
-        int posOut = posMbarOut + posMmkOut[j*2];
-        if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j] & 65535];
-        if (j*2+1 < nloopVolMmk) {
-          posMmk += blockDim.x;
-          posOut = posMbarOut + posMmkOut[j*2+1];
-          if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j] >> 16];
-        }
-      }
+//       int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
 // #pragma unroll
-//       for (int j=0;j < nloopVolMmk;j++) {
-//         int posMmk = threadIdx.x + j*blockDim.x;
-//         int posOut = posMbarOut + posMmkOut[j];
-//         if ((j % 2) == 0) {
-//           if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j/2].val[0]];
-//         } else {
-//           if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j/2].val[1]];
-//         }
+//       for (int i=16;i >= 1;i/=2) {
+//         posMbarOut += __shfl_xor(posMbarOut, i);
 //       }
-#else
-#pragma unroll
-      for (int j=0;j < nloopVolMmk;j++) {
-        int posMmk = threadIdx.x + j*blockDim.x;
-        int posOut = posMbarOut + posMmkOut[j];
-        if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j]];
-      }
-#endif
 
+    __syncthreads();
+
+#pragma unroll
+    for (int j=0;j < nloopVolMmk;j++) {
+      int posMmk = threadIdx.x + j*blockDim.x;
+      int posOut = posMbarOut + posMmkOut[j];
+      if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j]];
     }
+
 
   }
   
 }
-
-#if 0
-//
-// General transpose. Thread block loads plan.volMmk number of elements
-//
-// numthread.x = warpSize
-// numthread.y = volMmk/numthread.x
-// numblock(plan.volMbar);
-//
-#define USE_LOOP
-#define ILP_UNROLL 4
-template <typename T>
-__global__ void transposeTensorKernelArg_general(
-  const int volMm, const int volMk, const int volMmk, const int volMbar,
-  const int sizeMmk, const int sizeMbar,
-  const TensorConvInOut* __restrict__ gl_Mmk,
-  const TensorConvInOut* __restrict__ gl_Mbar,
-  const TensorConv* __restrict__ gl_Msh,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
-
-  // Shared memory. volMmk elements
-  extern __shared__ T shBuffer[];
-
-  const int warpLane = threadIdx.x & (warpSize - 1);
-
-  TensorConvInOut Mbar;
-  Mbar.c_in = 1;
-  Mbar.d_in = 1;
-  Mbar.c_out = 1;
-  Mbar.d_out = 1;
-  if (warpLane < sizeMbar) {
-    Mbar = gl_Mbar[warpLane];
-  }
-  TensorConvInOut* shMmk = (TensorConvInOut *)&shBuffer[volMmk];
-  if (warpLane < sizeMmk) {
-    shMmk[warpLane] = gl_Mmk[warpLane];
-  }
-  // TensorConvInOut Mmk;
-  // Mmk.c_in = 1;
-  // Mmk.d_in = 1;
-  // Mmk.c_out = 1;
-  // Mmk.d_out = 1;
-  // if (warpLane < sizeMmk) {
-  //   Mmk = gl_Mmk[warpLane];
-  // }
-  // TensorConv* shMsh = (TensorConv *)&shMmk[sizeMmk];
-  // if (warpLane < sizeMmk) {
-  //   shMsh[warpLane] = gl_Msh[warpLane];
-  // }
-  TensorConv Msh;
-  Msh.c = 1;
-  Msh.d = 1;
-  if (warpLane < sizeMmk) {
-    Msh = gl_Msh[warpLane];
-  }
-
-  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += blockDim.z*gridDim.z)
-  {
-
-    // Read from global memory
-    {
-      // int posMbarIn = tensorPos(posMbar, sizeMbar, Mbar.c_in, Mbar.d_in, Mbar.ct_in);
-      int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
-#pragma unroll
-      for (int i=16;i >= 1;i/=2) {
-        posMbarIn += __shfl_xor(posMbarIn, i);
-      }
-
-      int posMmkIn[ILP_UNROLL];
-#pragma unroll
-      for (int j=0;j < ILP_UNROLL;j++) {
-        posMmkIn[j] = 0;
-      }
-      for (int i=0;i < sizeMmk;i++) {
-        int c_in = shMmk[i].c_in;
-        int d_in = shMmk[i].d_in;
-        int ct_in = shMmk[i].ct_in;
-#pragma unroll
-        for (int j=0;j < ILP_UNROLL;j++) {
-          posMmkIn[j] += (((threadIdx.x + j*blockDim.x)/c_in) % d_in)*ct_in;
-        }
-      }
-
-      __syncthreads();
-
-      int posMmk0 = 0;
-      for (;posMmk0 < volMmk-blockDim.x*ILP_UNROLL;posMmk0 += blockDim.x*ILP_UNROLL) {
-#pragma unroll
-        for (int j=0;j < ILP_UNROLL;j++) {
-          shBuffer[posMmk0 + threadIdx.x + j*blockDim.x] = dataIn[posMbarIn + posMmkIn[j]];
-        }
-      }
-
-      for (;posMmk0 < volMmk;posMmk0 += blockDim.x) {
-        int posMmk = posMmk0 + threadIdx.x;
-        int posMmkIn = 0;
-        for (int i=0;i < sizeMmk;i++) {
-          posMmkIn += ((posMmk/shMmk[i].c_in) % shMmk[i].d_in)*shMmk[i].ct_in;
-        }
-        if (posMmk < volMmk) shBuffer[posMmk] = dataIn[posMbarIn + posMmkIn];
-      }
-
-/*
-      __syncthreads();
-
-#ifdef USE_LOOP
-      for (int posMmk0=0;posMmk0 < volMmk;posMmk0 += blockDim.x) {
-        int posMmk = posMmk0 + threadIdx.x;
-        // int posMmkIn = tensorPosLoop(posMmk, sizeMmk, Mmk.c_in, Mmk.d_in, Mmk.ct_in);
-        int posMmkIn = 0;
-        for (int i=0;i < sizeMmk;i++) {
-          posMmkIn += ((posMmk/__shfl(Mmk.c_in,i)) % __shfl(Mmk.d_in,i))*__shfl(Mmk.ct_in,i);
-          // posMmkIn += ((posMmk/shMmk[i].c_in) % shMmk[i].d_in)*shMmk[i].ct_in;
-        }
-        int posIn    = posMbarIn + posMmkIn;
-        if (posMmk < volMmk) shBuffer[posMmk] = dataIn[posIn];
-      }
-#else
-      for (int posMmk0=threadIdx.y*volMm;posMmk0 < volMmk;posMmk0 += blockDim.y*volMm) {
-        for (int posMm0=0;posMm0 < volMm;posMm0 += blockDim.x) {
-          int posMm    = posMm0 + threadIdx.x;
-          int posMmkIn = tensorPos(posMmk0, sizeMmk, Mmk.c_in, Mmk.d_in, Mmk.ct_in);
-          int posIn    = posMbarIn + posMmkIn + posMm;
-          int posMmk   = posMmk0 + posMm;
-          if (posMm < volMm) shBuffer[posMmk] = dataIn[posIn];
-        }
-      }
-#endif
-*/
-
-    }
-
-    // Write to global memory
-    {
-      // int posMbarOut = tensorPos(posMbar, sizeMbar, Mbar.c_out, Mbar.d_out, Mbar.ct_out);
-      int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
-#pragma unroll
-      for (int i=16;i >= 1;i/=2) {
-        posMbarOut += __shfl_xor(posMbarOut, i);
-      }
-
-      int posMmkOut[ILP_UNROLL];
-      int posSh[ILP_UNROLL];
-#pragma unroll
-      for (int j=0;j < ILP_UNROLL;j++) {
-        posMmkOut[j] = 0;
-        posSh[j] = 0;
-      }
-      for (int i=0;i < sizeMmk;i++) {
-        int c_out = shMmk[i].c_out;
-        int d_out = shMmk[i].d_out;
-        int ct_out = shMmk[i].ct_out;
-#pragma unroll
-        for (int j=0;j < ILP_UNROLL;j++) {
-          posMmkOut[j] += (((threadIdx.x + j*blockDim.x)/c_out) % d_out)*ct_out;
-        }
-        int c = __shfl(Msh.c,i);
-        int d = __shfl(Msh.d,i);
-        int ct = __shfl(Msh.ct,i);
-#pragma unroll
-        for (int j=0;j < ILP_UNROLL;j++) {
-          posSh[j] += (((threadIdx.x + j*blockDim.x)/c) % d)*ct;
-        }
-      }
-
-      __syncthreads();
-
-      int posMmk0 = 0;
-      for (;posMmk0 < volMmk-blockDim.x*ILP_UNROLL;posMmk0 += blockDim.x*ILP_UNROLL) {
-#pragma unroll
-        for (int j=0;j < ILP_UNROLL;j++) {
-          dataOut[posMbarOut + posMmkOut[j]] = shBuffer[posSh[j]];
-        }
-      }
-
-      for (;posMmk0 < volMmk;posMmk0 += blockDim.x) {
-        int posMmk = posMmk0 + threadIdx.x;
-        int posMmkOut = 0;
-        int posSh = 0;
-        for (int i=0;i < sizeMmk;i++) {
-          posMmkOut += ((posMmk/shMmk[i].c_out) % shMmk[i].d_out)*shMmk[i].ct_out;
-          posSh += ((posMmk/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i);
-        }
-        int posOut = posMbarOut + posMmkOut;
-        if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh];
-      }
-
-/*
-#ifdef USE_LOOP
-      for (int posMmk0=0;posMmk0 < volMmk;posMmk0 += blockDim.x) {
-        int posMmk = posMmk0 + threadIdx.x;
-        // int posOut = posMbarOut + tensorPosLoop(posMmk, sizeMmk, Mmk.c_out, Mmk.d_out, Mmk.ct_out);
-        // int posSh  = tensorPosLoop(posMmk, sizeMmk, Msh.c_out, Msh.d_out, Msh.ct_out);
-
-        int posMmkOut = 0;
-        for (int i=0;i < sizeMmk;i++) {
-          // posMmkOut += ((posMmk/__shfl(Mmk.c_out,i)) % __shfl(Mmk.d_out,i))*__shfl(Mmk.ct_out,i);
-          posMmkOut += ((posMmk/shMmk[i].c_out) % shMmk[i].d_out)*shMmk[i].ct_out;
-        }
-        int posOut = posMbarOut + posMmkOut;
-        int posSh = 0;
-        for (int i=0;i < sizeMmk;i++) {
-          posSh += ((posMmk/__shfl(Msh.c,i)) % __shfl(Msh.d,i))*__shfl(Msh.ct,i);
-          // posSh += ((posMmk/shMsh[i].c) % shMsh[i].d)*shMsh[i].ct;
-        }
-
-        // int posMinorIn;
-        // int posSh;
-        // tensorPosLoop2(posMmk, sizeMmk, Mmk.c_out, Mmk.d_out, Mmk.ct_out, Msh.c_out, Msh.d_out, Msh.ct_out,
-        //   posMinorIn, posSh);
-        // int posOut = posMbarOut + posMinorIn;
-        if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh];
-      }
-#else
-      for (int posMmk0=threadIdx.y*volMk;posMmk0 < volMmk;posMmk0 += blockDim.y*volMk) {
-        for (int posMk0=0;posMk0 < volMk;posMk0 += blockDim.x) {
-          int posMk  = posMk0 + threadIdx.x;
-          int posMmk = posMmk0 + posMk;
-          int posOut = posMbarOut + tensorPosLoop(posMmk, sizeMmk, Mmk.c_out, Mmk.d_out, Mmk.ct_out);
-          int posSh  = tensorPosLoop(posMmk, sizeMmk, Msh.c_out, Msh.d_out, Msh.ct_out);
-          if (posMk < volMk) dataOut[posOut] = shBuffer[posSh];
-        }
-      }
-#endif
-*/
-
-    }
-
-  }
-  
-}
-#endif
 
 #if 0
 //
@@ -1284,24 +971,24 @@ void transposeTensorArg(TensorTransposePlan& plan,
         numblock.x, numblock.y, numblock.z, shmemsize, nloopVolMmk);
 
       switch(nloopVolMmk) {
-        // case 1:
-        // transposeTensorKernelArg_general<T, 1> <<< numblock, numthread, shmemsize, stream >>>
-        // (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
-        //   plan.sizeMmk, plan.sizeMbar,
-        //   plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
-        // break;
-        // case 2:
-        // transposeTensorKernelArg_general<T, 2> <<< numblock, numthread, shmemsize, stream >>>
-        // (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
-        //   plan.sizeMmk, plan.sizeMbar,
-        //   plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
-        // break;
-        // case 3:
-        // transposeTensorKernelArg_general<T, 3> <<< numblock, numthread, shmemsize, stream >>>
-        // (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
-        //   plan.sizeMmk, plan.sizeMbar,
-        //   plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
-        // break;
+        case 1:
+        transposeTensorKernelArg_general<T, 1> <<< numblock, numthread, shmemsize, stream >>>
+        (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
+          plan.sizeMmk, plan.sizeMbar,
+          plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
+        break;
+        case 2:
+        transposeTensorKernelArg_general<T, 2> <<< numblock, numthread, shmemsize, stream >>>
+        (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
+          plan.sizeMmk, plan.sizeMbar,
+          plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
+        break;
+        case 3:
+        transposeTensorKernelArg_general<T, 3> <<< numblock, numthread, shmemsize, stream >>>
+        (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
+          plan.sizeMmk, plan.sizeMbar,
+          plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
+        break;
         case 6:
         transposeTensorKernelArg_general<T, 6> <<< numblock, numthread, shmemsize, stream >>>
         (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
@@ -1314,20 +1001,6 @@ void transposeTensorArg(TensorTransposePlan& plan,
         break;
       }
 
-#if 0
-      dim3 numthread(256, 1);
-      dim3 numblock(1, 1, plan.volMbar);
-      numblock.z = min(256, plan.volMbar);
-      numblock.z = min(65535, numblock.z);
-      int shmemsize = plan.volMmk*sizeof(T) + plan.sizeMmk*(sizeof(TensorConvInOut) + 0*sizeof(TensorConv));
-      printf("numthread %d %d %d numblock %d %d %d shmemsize %d\n",
-        numthread.x, numthread.y, numthread.z,
-        numblock.x, numblock.y, numblock.z, shmemsize);
-      transposeTensorKernelArg_general<T> <<< numblock, numthread, shmemsize, stream >>>
-      (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar,
-        plan.sizeMmk, plan.sizeMbar,
-        plan.Mmk, plan.Mbar, plan.Msh, dataIn, dataOut);
-#endif
     }
     break;
 
