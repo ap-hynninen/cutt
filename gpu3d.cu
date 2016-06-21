@@ -1,6 +1,9 @@
 #include <vector>
 #include <math.h>
 #include <time.h>
+#include <ctime>
+#include <cstdlib>
+#include <algorithm>
 #include "CudaUtils.h"
 #include "CudaTranspose.h"
 #include "CpuTranspose.h"
@@ -86,9 +89,10 @@ int main(int argc, char *argv[]) {
 #endif
 
 #if 0
-  for (int rank = 5;rank <= 5;rank++) {
+  for (int rank = 4;rank <= 4;rank++) {
     std::vector<int> dim(rank);
-    for (int r=0;r < rank;r++) dim[r] = 32 + r*4;
+    for (int r=0;r < rank;r++) dim[r] = 16;
+    // for (int r=0;r < rank;r++) dim[r] = 2 + r;
     int rank_factorial = factorial(rank);
     std::vector<double> bandwidths(rank_factorial);
 
@@ -112,12 +116,19 @@ int main(int argc, char *argv[]) {
 
     // printf("rank_factorial %d\n", rank_factorial);
     for (int p=0;p < rank_factorial;p++) {
-      std::vector<int> permutation = decode_permutation(rank, p);
-    
-      bandwidths[p] = test_tensor<double>(dim, permutation,
-        h_data_in, h_data_ref, h_data_out, d_data_in, d_data_out);
 
-      if (bandwidths[p] < 0.0) goto break_loop;
+      std::vector<int> permutation = decode_permutation(rank, p);
+
+      if (permutation[0] == 3 && permutation[1] == 2 &&
+        permutation[2] == 1 && permutation[3] == 0) {
+    
+        bandwidths[p] = test_tensor<double>(dim, permutation,
+          h_data_in, h_data_ref, h_data_out, d_data_in, d_data_out);
+
+        if (bandwidths[p] < 0.0) goto break_loop;
+  
+      }
+
     }
 
     for (int p=0;p < rank_factorial;p++) {
@@ -134,7 +145,7 @@ int main(int argc, char *argv[]) {
 break_loop:
 #endif
 
-#if 1
+#if 0
   std::vector<int> dim(4);
   std::vector<int> permutation(4);
   dim[0] = 16;
@@ -177,16 +188,16 @@ break_loop:
   deallocate_device<double>(&d_data_out);
 #endif
 
-#if 0
+#if 1
   int numElem = 40*1000000;
   int ranks[8] = {2, 3, 4, 5, 6, 7, 8, 15};
   double bandwidths[8];
-  for (int i=0;i < 1;i++) {
+  for (int i=7;i < 8;i++) {
     std::vector<int> dim(ranks[i]);
     std::vector<int> permutation(ranks[i]);
     int dimave = (int)pow(numElem, 1.0/(double)ranks[i]);
 
-/*
+#if 0
     if (dimave < 100.0) {
       dim[0]            = 32;
       dim[ranks[i] - 1] = 32;
@@ -196,23 +207,31 @@ break_loop:
     }
     // Distribute remaining volume to the middle ranks
     int ranks_left = ranks[i] - 2;
-    double vol_left = vol/(double)(dim[0]*dim[ranks[i] - 1]);
+    double numElem_left = numElem/(double)(dim[0]*dim[ranks[i] - 1]);
     for (int r=1;r < ranks[i] - 1;r++) {
-      dim[r] = (int)pow(vol_left, 1.0/(double)ranks_left);
-      vol_left /= (double)dim[r];
+      dim[r] = (int)pow(numElem_left, 1.0/(double)ranks_left);
+      numElem_left /= (double)dim[r];
       ranks_left--;
     }
-*/
-
+#else
     double numElem_left = numElem;
     for (int r=0;r < ranks[i];r++) {
       dim[r] = (int)pow(numElem_left, 1.0/(double)(ranks[i] - r));
       numElem_left /= (double)dim[r];
     }
+#endif
 
+    // Inverse order
     for (int r=0;r < ranks[i];r++) {
       permutation[r] = ranks[i] - 1 - r;
     }
+
+    // // Random order
+    // for (int r=0;r < ranks[i];r++) {
+    //   permutation[r] = r;
+    // }
+    // std::srand(unsigned (std::time(0)));
+    // std::random_shuffle(permutation.begin(), permutation.end());
 
     int vol = 1;
     for (int r=0;r < ranks[i];r++) {
@@ -242,7 +261,7 @@ break_loop:
     deallocate_device<double>(&d_data_out);
   }
 
-  for (int i=0;i < 7;i++) {
+  for (int i=0;i < 8;i++) {
     printf("%lf\n", bandwidths[i]);
   }
 #endif
@@ -359,7 +378,7 @@ double test_tensor(std::vector<int>& dim, std::vector<int>& permutation,
     struct timespec now, tmstart;
     clock_gettime(CLOCK_REALTIME, &tmstart);
     
-    plan = new TensorTransposePlan(rank, dim.data(), permutation.data());
+    plan = new TensorTransposePlan(rank, dim.data(), permutation.data(), sizeof(T));
     
     clock_gettime(CLOCK_REALTIME, &now);
     double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));

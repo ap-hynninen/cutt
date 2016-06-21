@@ -1,5 +1,7 @@
 #include <iostream>
 
+#include "TensorConv.h"
+
 class CpuTensorTranspose {
 public:
   // Rank of the tensor
@@ -57,21 +59,24 @@ template <typename T>
 void cpuTransposeTensor(const int rank, const int* dim, int* permutation,
   const T* dataIn, T* dataOut) {
 
-  int* cuDimOut = new int[rank];
-  int* inv_permutation = new int[rank];
-  for (int i=0;i < rank;i++) {
-    inv_permutation[permutation[i]] = i;
-  }
+  // int* cuDimOut = new int[rank];
+  // int* inv_permutation = new int[rank];
+  // for (int i=0;i < rank;i++) {
+  //   inv_permutation[permutation[i]] = i;
+  // }
 
-  int* tmp = new int[rank];
-  tmp[0] = 1;
-  for (int r=1;r < rank;r++) {
-    tmp[r] = tmp[r-1]*dim[permutation[r-1]];
-  }
+  // int* tmp = new int[rank];
+  // tmp[0] = 1;
+  // for (int r=1;r < rank;r++) {
+  //   tmp[r] = tmp[r-1]*dim[permutation[r-1]];
+  // }
 
-  for (int r=0;r < rank;r++) {
-    cuDimOut[r] = tmp[inv_permutation[r]];
-  }
+  // for (int r=0;r < rank;r++) {
+  //   cuDimOut[r] = tmp[inv_permutation[r]];
+  // }
+
+  TensorConv* tensorConv = new TensorConv[rank];
+  calcTensorConv(rank, dim, permutation, tensorConv);
 
   int vol = 1;
   for (int r=0;r < rank;r++) vol *= dim[r];
@@ -80,20 +85,26 @@ void cpuTransposeTensor(const int rank, const int* dim, int* permutation,
     // Read data
     int dataInVal = dataIn[i];
     // Calculate position in transposed tensor
-    int j = i;
-    int pos = 0;
-    for (int r=0;r < rank;r++) {
-      int dimVal = dim[r];
-      pos += (j % dimVal)*cuDimOut[r];
-      j /= dimVal;
-    }
+    // int j = i;
+    // int pos = 0;
+    // for (int r=0;r < rank;r++) {
+    //   int dimVal = dim[r];
+    //   pos += (j % dimVal)*cuDimOut[r];
+    //   j /= dimVal;
+    // }
+    // for (int r=0;r < rank;r++) {
+    //   pos += ((j/tensorConv[r].c) % tensorConv[r].d)*tensorConv[r].ct;
+    // }
+
+    int pos = tensorPos(i, rank, tensorConv);
+
     // Write data
     dataOut[pos] = dataInVal;
   }
 
-  delete [] tmp;
-  delete [] cuDimOut;
-  delete [] inv_permutation;
+  // delete [] tmp;
+  // delete [] cuDimOut;
+  // delete [] inv_permutation;
 }
 
 template <typename T>
