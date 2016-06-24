@@ -31,6 +31,8 @@ as well as the test and benchmarks
 bin/cutt_test
 bin/cutt_bench
 
+In order to use cuTT, you only need the include (include/cutt.h) and the library (lib/libcutt.a) files.
+
 ---------
 # Usage #
 ---------

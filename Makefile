@@ -54,11 +54,10 @@ endif
 # Set optimization level
 OPTLEV = -O2
 
-OBJSLIB = cutt.o cuttplan.o cuttkernel.o CudaUtils.o
-
-OBJSTEST = cutt_test.o cutt.o cuttplan.o cuttkernel.o CudaUtils.o TensorTester.o
-OBJSBENCH = cutt_bench.o cutt.o cuttplan.o cuttkernel.o CudaUtils.o TensorTester.o
-OBJS = $(OBJSTEST) $(OBJSBENCH)
+OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/CudaUtils.o
+OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o
+OBJSBENCH = build/cutt_bench.o build/TensorTester.o build/CudaUtils.o
+OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 
 #CUDAROOT = $(subst /bin/,,$(dir $(shell which nvcc)))
 CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
@@ -67,35 +66,36 @@ CFLAGS = -I${CUDAROOT}/include -std=gnu++11
 
 CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) -Xcompiler "$(CUDA_CCFLAGS)"
 
-ifeq ($(OS),linux)
-CUDA_LFLAGS = -L$(CUDAROOT)/lib64
-else
-ifeq ($(OS),titan)
-CUDA_LFLAGS = -L$(CUDAROOT)/lib64
-else
+ifeq ($(OS),osx)
 CUDA_LFLAGS = -L$(CUDAROOT)/lib
+else
+CUDA_LFLAGS = -L$(CUDAROOT)/lib64
 endif
-endif
-CUDA_LFLAGS += -lcudart -Llib
 
-all: lib/libcutt.a bin/cutt_test bin/cutt_bench
+CUDA_LFLAGS += -Llib -lcudart -lcutt
+
+all: create_build lib/libcutt.a bin/cutt_test bin/cutt_bench
+
+create_build:
+	mkdir -p build
 
 lib/libcutt.a: $(OBJSLIB)
 	mkdir -p lib
 	ar -cvq lib/libcutt.a $(OBJSLIB)
 	mkdir -p include
+	cp -f src/cutt.h include/cutt.h
 
-bin/cutt_test : $(OBJSTEST)
+bin/cutt_test : lib/libcutt.a $(OBJSTEST)
 	mkdir -p bin
 	$(CUDAC) $(CUDA_LFLAGS) -o bin/cutt_test $(OBJSTEST)
 
-bin/cutt_bench : $(OBJSBENCH)
+bin/cutt_bench : lib/libcutt.a $(OBJSBENCH)
 	mkdir -p bin
 	$(CUDAC) $(CUDA_LFLAGS) -o bin/cutt_bench $(OBJSBENCH)
 
 clean: 
-	rm -f *.o
-	rm -f *.d
+	rm -f $(OBJS)
+	rm -f build/*.d
 	rm -f *~
 	rm -f lib/libcutt.a
 	rm -f bin/cutt_test
@@ -104,10 +104,10 @@ clean:
 # Pull in dependencies that already exist
 -include $(OBJS:.o=.d)
 
-%.o : %.cu
-	$(CUDAC) -c $(CUDA_CFLAGS) $(DEFS) $<
-	$(CUDAC) -M $(CUDA_CFLAGS) $(DEFS) $*.cu > $*.d
+build/%.o : src/%.cu
+	$(CUDAC) -c $(CUDA_CFLAGS) -o build/$*.o $<
+	$(CUDAC) -M $(CUDA_CFLAGS) $< > build/$*.d
 
-%.o : %.cpp
-	$(CC) -c $(CFLAGS) $(DEFS) $<
-	$(CC) -M $(CFLAGS) $(DEFS) $*.cpp > $*.d
+build/%.o : src/%.cpp
+	$(CC) -c $(CFLAGS) -o build/$*.o $<
+	$(CC) -M $(CFLAGS) $< > build/$*.d
