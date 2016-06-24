@@ -144,6 +144,7 @@ Licence
 MIT License
 
 Copyright (c) 2016 Antti-Pekka Hynninen
+
 Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
