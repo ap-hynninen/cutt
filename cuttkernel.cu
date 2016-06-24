@@ -1,3 +1,27 @@
+/******************************************************************************
+MIT License
+
+Copyright (c) 2016 Antti-Pekka Hynninen
+Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*******************************************************************************/
 #include <cuda.h>
 #include "CudaUtils.h"
 #include "cuttkernel.h"
@@ -23,6 +47,87 @@ int tensorPos(
 
 //__constant__ int args[2];
 
+#if 0
+//
+// Transpose when Mm and Mk don't overlap and contain only single rank
+//
+//  dim3 numthread(TILEDIM, TILEROWS, 1);
+//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+//
+template <typename T>
+__global__ void transposeTiledSingleRank(
+  const int volMbar, const int sizeMbar,
+  const int2 readVol, const int cuDimMk, const int cuDimMm,
+  const TensorConvInOut* __restrict__ glMbar,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  // Shared memory
+  __shared__ T shTile[TILEDIM][TILEDIM+1];
+
+  const int warpLane = threadIdx.x & (warpSize - 1);
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (warpLane < sizeMbar) {
+    Mbar = glMbar[warpLane];
+  }
+
+  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
+  {
+
+    // Compute global memory positions
+    int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+    int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMajorIn += __shfl_xor(posMajorIn, i);
+      posMajorOut += __shfl_xor(posMajorOut, i);
+    }
+
+    for (int x0 = blockIdx.x * TILEDIM;x0 < readVol.x;x0 += blockDim.x*gridDim.x) {
+      for (int y0 = blockIdx.y * TILEDIM;y0 < readVol.y;y0 += blockDim.y*gridDim.y) {
+
+        int xin = x0 + threadIdx.x;
+        int yin = y0 + threadIdx.y;
+
+        int xout = x0 + threadIdx.y;
+        int yout = y0 + threadIdx.x;
+
+        int posIn = posMajorIn + xin + yin*cuDimMk;
+        int posOut = posMajorOut + yout + xout*cuDimMm;
+
+        // Read from global memory
+        __syncthreads();
+
+        // Read data into shared memory tile
+    #pragma unroll
+        for (int j=0;j < TILEDIM;j += TILEROWS) {
+          int pos = posIn + j*cuDimMk;
+          if (xin < readVol.x && yin + j < readVol.y) {
+            shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
+          }
+        }
+
+        // Write to global memory
+        __syncthreads();
+
+    #pragma unroll
+        for (int j=0;j < TILEDIM;j += TILEROWS) {
+          int pos = posOut + j*cuDimMm;
+          if (xout + j < readVol.x && yout < readVol.y) {
+            dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
+          }
+        }
+      }
+    }
+  }
+  
+}
+#endif
+
+#if 1
 //
 // Transpose when Mm and Mk don't overlap and contain only single rank
 //
@@ -121,6 +226,7 @@ __global__ void transposeTiledSingleRank(
   }
   
 }
+#endif
 
 //
 // General transpose. Thread block loads plan.volMmk number of elements
@@ -461,10 +567,13 @@ int cuttKernelLaunchConfiguration(cuttPlan_t& plan, cudaDeviceProp& prop) {
       plan.numthread.x = TILEDIM;
       plan.numthread.y = TILEROWS;
       plan.numthread.z = 1;
+      // plan.numblock.x = 1;
+      // plan.numblock.y = 1;
       plan.numblock.x = (plan.volMm - 1)/TILEDIM + 1;
       plan.numblock.y = (plan.volMk - 1)/TILEDIM + 1;
-      plan.numblock.z = max(1, plan.volMbar);
-      plan.numblock.z = min(128, plan.numblock.z);
+      plan.numblock.z = plan.volMbar;
+      plan.numblock.z = min(128/(plan.numblock.x*plan.numblock.y), plan.numblock.z);
+      plan.numblock.z = max(1, plan.numblock.z);
       plan.shmemsize = 0;
       plan.numRegStorage = 0;
     }
@@ -474,10 +583,11 @@ int cuttKernelLaunchConfiguration(cuttPlan_t& plan, cudaDeviceProp& prop) {
       plan.numthread.x = TILEDIM;
       plan.numthread.y = TILEROWS;
       plan.numthread.z = 1;
-      plan.numblock.x = (plan.volMmk - 1)/TILEDIM + 1;
-      plan.numblock.y = (plan.volMmk - 1)/TILEDIM + 1;
-      plan.numblock.z = max(1, plan.volMbar);
-      plan.numblock.z = min(256, plan.numblock.z);
+      plan.numblock.x = (plan.readVol.x - 1)/TILEDIM + 1;
+      plan.numblock.y = (plan.readVol.y - 1)/TILEDIM + 1;
+      plan.numblock.z = plan.volMbar;
+      plan.numblock.z = min(256/(plan.numblock.x*plan.numblock.y), plan.numblock.z);
+      plan.numblock.z = max(1, plan.numblock.z);
       plan.shmemsize = 0;
       plan.numRegStorage = 0;
     }
@@ -487,6 +597,11 @@ int cuttKernelLaunchConfiguration(cuttPlan_t& plan, cudaDeviceProp& prop) {
   plan.numblock.x = min(65535, plan.numblock.x);
   plan.numblock.y = min(65535, plan.numblock.y);
   plan.numblock.z = min(65535, plan.numblock.z);
+
+  // printf("numthread %d %d %d numblock %d %d %d shmemsize %d numRegStorage %d\n",
+  //   plan.numthread.x, plan.numthread.y, plan.numthread.z,
+  //   plan.numblock.x, plan.numblock.y, plan.numblock.z,
+  //   plan.shmemsize, plan.numRegStorage);
 
   // Return the number of active blocks with these settings
   return getNumActiveBlock(plan);

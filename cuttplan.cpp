@@ -1,3 +1,27 @@
+/******************************************************************************
+MIT License
+
+Copyright (c) 2016 Antti-Pekka Hynninen
+Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*******************************************************************************/
 #include <algorithm>
 #include "CudaUtils.h"
 #include "cuttplan.h"
@@ -94,7 +118,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
 
   // Minimum allowed dimension that is dealt with
   // using the tiled algorithm
-  const int MIN_TILED_DIM = TILEDIM;
+  const int MIN_TILED_DIM = TILEDIM/2 - 1;
 
   // Setup Mm
   {
@@ -215,12 +239,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
   setupMmk(isMm, isMk, dim);
   setupMbar(isMm, isMk, dim);
 
-  // Setup final kernel launch configuration and check that kernel execution is possible
-  if (cuttKernelLaunchConfiguration(*this, prop) == 0) {
-    return false;
-  }
-
-#if 0
+#if 1
   printf("method ");
   switch(method) {
     case General:
@@ -272,6 +291,19 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
       cuDimMm = 1;
       vol1 = 1;
     }
+  }
+
+  if (method == TiledSingleRank) {
+    readVol.x = dim[0];
+    readVol.y = dim[permutation[0]];
+  } else if (method == TiledLeadVolSame) {
+    readVol.x = vol0;
+    readVol.y = vol1;
+  }
+
+  // Setup final kernel launch configuration and check that kernel execution is possible
+  if (cuttKernelLaunchConfiguration(*this, prop) == 0) {
+    return false;
   }
 
   // Build MmI and MkI
