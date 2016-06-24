@@ -1,21 +1,19 @@
 cuTT - CUDA Tensor Transpose
+============================
 
 cuTT is a high performance tensor transpose library for NVIDIA GPUs. It works with Kepler (SM 3.0) and above GPUs.
 
-version 1.0
+Version 1.0
 
-(c) Antti-Pekka Hynninen, 2016
-
-----------------
-# Installation #
-----------------
+Installation
+============
 
 Software requirements:
--C++ compiler with C++11 compitability
--CUDA compiler
+ * C++ compiler with C++11 compitability
+ * CUDA compiler
 
 Hardware requirements:
--Kepler (SM 3.0) or above NVIDIA GPU
+ * Kepler (SM 3.0) or above NVIDIA GPU
 
 To compile cuTT library as well as test cases and benchmarks, simply do
 
@@ -23,25 +21,24 @@ make
 
 This will create the library itself:
 
-include/cutt.h
-lib/libcutt.a
+ * include/cutt.h
+ * lib/libcutt.a
 
 as well as the test and benchmarks
 
-bin/cutt_test
-bin/cutt_bench
+ * bin/cutt_test
+ * bin/cutt_bench
 
 In order to use cuTT, you only need the include (include/cutt.h) and the library (lib/libcutt.a) files.
 
----------
-# Usage #
----------
+Usage
+=====
 
 cuTT uses a "plan structure" similar to FFTW and cuFFT libraries, where the
 user first creates a plan for the transpose and then executes that plan.
 Here is an example code.
 
------------------------------------------------------------------------------------
+```c++
 #include <cutt.h>
 
 //
@@ -79,16 +76,16 @@ int main() {
 
   return 0;
 }
------------------------------------------------------------------------------------
+```
 
 Input (idata) and output (odata) data are both in GPU memory and must point to different
 memory areas for correct operation. That is, cuTT only currently supports out-of-place
 transposes.
 
-------------
-# cuTT API #
-------------
+cuTT API
+========
 
+```c++
 //
 // Create plan
 //
@@ -139,8 +136,11 @@ cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream);
 // Success/unsuccess code
 //
 cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata);
+```
 
-/******************************************************************************
+Licence
+=======
+
 MIT License
 
 Copyright (c) 2016 Antti-Pekka Hynninen
@@ -163,4 +163,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-*******************************************************************************/
