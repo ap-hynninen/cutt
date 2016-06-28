@@ -137,7 +137,7 @@ __global__ void transposeTiledSingleRank(
 template <typename T>
 __global__ void transposeTiledSingleRank(
   const int volMbar, const int sizeMbar,
-  const int2 readVol, const int cuDimMk, const int cuDimMm,
+  const int2 tiledVol, const int cuDimMk, const int cuDimMm,
   const TensorConvInOut* __restrict__ glMbar,
   const T* __restrict__ dataIn, T* __restrict__ dataOut) {
 
@@ -160,8 +160,8 @@ __global__ void transposeTiledSingleRank(
   const int xout = blockIdx.x * TILEDIM + threadIdx.y;
   const int yout = blockIdx.y * TILEDIM + threadIdx.x;
 
-  const unsigned int maskIny = __ballot((yin + warpLane < readVol.y))*(xin < readVol.x);
-  const unsigned int maskOutx = __ballot((xout + warpLane < readVol.x))*(yout < readVol.y);
+  const unsigned int maskIny = __ballot((yin + warpLane < tiledVol.y))*(xin < tiledVol.x);
+  const unsigned int maskOutx = __ballot((xout + warpLane < tiledVol.x))*(yout < tiledVol.y);
 
   const int posMinorIn = xin + yin*cuDimMk;
   const int posMinorOut = yout + xout*cuDimMm;
@@ -181,20 +181,6 @@ __global__ void transposeTiledSingleRank(
     }
     int posIn = posMajorIn + posMinorIn;
     int posOut = posMajorOut + posMinorOut;
-
-//     int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
-// #pragma unroll
-//     for (int i=16;i >= 1;i/=2) {
-//       posMajorIn += __shfl_xor(posMajorIn, i);
-//     }
-//     int posIn = posMajorIn + posMinorIn;
-
-//     int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
-// #pragma unroll
-//     for (int i=16;i >= 1;i/=2) {
-//       posMajorOut += __shfl_xor(posMajorOut, i);
-//     }
-//     int posOut = posMajorOut + posMinorOut;
 
     // Read from global memory
     __syncthreads();
@@ -349,7 +335,7 @@ template <typename T>
 __global__ void transposeTiledLeadVolSame(
   const int volMbar, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
-  const int2 readVol,
+  const int2 tiledVol,
   const TensorConvInOut* __restrict__ gl_Mbar,
   const T* __restrict__ dataIn, T* __restrict__ dataOut) {
 
@@ -382,7 +368,7 @@ __global__ void transposeTiledLeadVolSame(
 #pragma unroll
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos  = pos0  + j*cuDimMk;
-        if ((x < readVol.x) && (y + j < readVol.y)) {
+        if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
         // if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
           val[j/TILEROWS] = dataIn[pos];
         }
@@ -397,7 +383,7 @@ __global__ void transposeTiledLeadVolSame(
 #pragma unroll
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMm;
-        if ((x < readVol.x) && (y + j < readVol.y)) {
+        if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
         // if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
           dataOut[pos] = val[j/TILEROWS];
         }
@@ -447,47 +433,47 @@ void cuttKernelSetSharedMemConfig() {
 //
 // Returns the maximum number of active blocks per SM
 //
-int getNumActiveBlock(cuttPlan_t& plan) {
+int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
   int numActiveBlock;
-  int numthread = plan.numthread.x * plan.numthread.y * plan.numthread.z;
-  switch(plan.method) {
+  int numthread = lc.numthread.x * lc.numthread.y * lc.numthread.z;
+  switch(method) {
     case cuttPlan_t::General:
     {
     #define CALL(TYPE, NREG) \
       cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-        transposeGeneral<TYPE, NREG>, numthread, plan.shmemsize)
-      switch(plan.numRegStorage) {
+        transposeGeneral<TYPE, NREG>, numthread, lc.shmemsize)
+      switch(lc.numRegStorage) {
         case 1:
-        if (plan.sizeofType == 4) CALL(float,  1);
-        if (plan.sizeofType == 8) CALL(double, 1);
+        if (sizeofType == 4) CALL(float,  1);
+        if (sizeofType == 8) CALL(double, 1);
         break;
         case 2:
-        if (plan.sizeofType == 4) CALL(float,  2);
-        if (plan.sizeofType == 8) CALL(double, 2);
+        if (sizeofType == 4) CALL(float,  2);
+        if (sizeofType == 8) CALL(double, 2);
         break;
         case 3:
-        if (plan.sizeofType == 4) CALL(float,  3);
-        if (plan.sizeofType == 8) CALL(double, 3);
+        if (sizeofType == 4) CALL(float,  3);
+        if (sizeofType == 8) CALL(double, 3);
         break;
         case 4:
-        if (plan.sizeofType == 4) CALL(float,  4);
-        if (plan.sizeofType == 8) CALL(double, 4);
+        if (sizeofType == 4) CALL(float,  4);
+        if (sizeofType == 8) CALL(double, 4);
         break;
         case 5:
-        if (plan.sizeofType == 4) CALL(float,  5);
-        if (plan.sizeofType == 8) CALL(double, 5);
+        if (sizeofType == 4) CALL(float,  5);
+        if (sizeofType == 8) CALL(double, 5);
         break;
         case 6:
-        if (plan.sizeofType == 4) CALL(float,  6);
-        if (plan.sizeofType == 8) CALL(double, 6);
+        if (sizeofType == 4) CALL(float,  6);
+        if (sizeofType == 8) CALL(double, 6);
         break;
         case 7:
-        if (plan.sizeofType == 4) CALL(float,  7);
-        if (plan.sizeofType == 8) CALL(double, 7);
+        if (sizeofType == 4) CALL(float,  7);
+        if (sizeofType == 8) CALL(double, 7);
         break;
         case 8:
-        if (plan.sizeofType == 4) CALL(float,  8);
-        if (plan.sizeofType == 8) CALL(double, 8);
+        if (sizeofType == 4) CALL(float,  8);
+        if (sizeofType == 8) CALL(double, 8);
         break;
       }
     #undef CALL
@@ -495,23 +481,23 @@ int getNumActiveBlock(cuttPlan_t& plan) {
     break;
     case cuttPlan_t::TiledSingleRank:
     {
-      if (plan.sizeofType == 4) {
+      if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledSingleRank<float>, numthread, plan.shmemsize);
+          transposeTiledSingleRank<float>, numthread, lc.shmemsize);
       } else {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledSingleRank<double>, numthread, plan.shmemsize);
+          transposeTiledSingleRank<double>, numthread, lc.shmemsize);
       }
     }
     break;
     case cuttPlan_t::TiledLeadVolSame:
     {
-      if (plan.sizeofType == 4) {
+      if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledLeadVolSame<float>, numthread, plan.shmemsize);
+          transposeTiledLeadVolSame<float>, numthread, lc.shmemsize);
       } else {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledLeadVolSame<double>, numthread, plan.shmemsize);
+          transposeTiledLeadVolSame<double>, numthread, lc.shmemsize);
       }
     }
     break;
@@ -523,105 +509,153 @@ int getNumActiveBlock(cuttPlan_t& plan) {
 //
 // Sets up kernel launch configuration
 //
-// Returns the number of blocks per SM that can be achieved on the General kernel
+// Returns the number of active blocks per SM that can be achieved on the General kernel
 // NOTE: Returns 0 when kernel execution is not possible
 //
 // Sets:
-// plan.numthread
-// plan.numblock
-// plan.shmemsize
-// plan.numRegStorage  (for General method)
+// lc.numthread
+// lc.numblock
+// lc.shmemsize
+// lc.numRegStorage  (for General method)
 //
-int cuttKernelLaunchConfiguration(cuttPlan_t& plan, cudaDeviceProp& prop) {
-  switch(plan.method) {
+int cuttKernelLaunchConfiguration(int method, int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
+  LaunchConfig& lc) {
+
+  switch(method) {
     case cuttPlan_t::General:
     {
       // Amount of shared memory required
-      plan.shmemsize = plan.volMmk*plan.sizeofType;
+      lc.shmemsize = ts.volMmk*sizeofType;
 
       // Check that we're not using too much shared memory per block
-      if (plan.shmemsize > prop.sharedMemPerBlock) return 0;
+      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
 
-      plan.numthread.x = ((plan.volMmk - 1)/prop.warpSize + 1)*prop.warpSize;
-      plan.numthread.y = 1;
-      plan.numthread.z = 1;
-      plan.numblock.x = max(1, plan.volMbar);
-      plan.numblock.x = min(256, plan.numblock.x);
-      plan.numblock.y = 1;
-      plan.numblock.z = 1;
+      // Min and max number of threads we can use
+      int minNumthread = ((ts.volMmk - 1)/(prop.warpSize*MAX_REG_STORAGE) + 1)*prop.warpSize;
+      int maxNumthread = ((ts.volMmk - 1)/(prop.warpSize) + 1)*prop.warpSize;      
+      if (minNumthread > prop.maxThreadsPerBlock) return 0;
+      maxNumthread = min(prop.maxThreadsPerBlock, maxNumthread);
 
-      plan.numRegStorage = (plan.volMmk - 1)/plan.numthread.x + 1;
-      if (plan.numRegStorage > maxNumRegStorage) {
-        // Find number of threads that works
-        plan.numthread.x = (( (plan.volMmk - 1)/maxNumRegStorage)/prop.warpSize + 1)*prop.warpSize;
-        plan.numRegStorage = (plan.volMmk - 1)/plan.numthread.x + 1;
+      // Min and max number of register storage we can use
+      // int minNumRegStorage = (ts.volMmk - 1)/maxNumthread + 1;
+      // int maxNumRegStorage = (ts.volMmk - 1)/minNumthread + 1;
+
+      if (maxNumthread <= 256) {
+        lc.numRegStorage = (ts.volMmk - 1)/128 + 1;
+      } else {
+        lc.numRegStorage = 6;
       }
 
-      // Check that we're not using too many threads or templated register storage
-      if (plan.numthread.x > prop.maxThreadsPerBlock || plan.numRegStorage > maxNumRegStorage) return 0;
+/*
+      int bestNumActiveBlock = 0;
+      int bestNumRegStorage = 0;
+
+      for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
+        lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
+        lc.numthread.x = min(prop.maxThreadsPerBlock, lc.numthread.x);
+        lc.numthread.y = 1;
+        lc.numthread.z = 1;
+        lc.numblock.x = max(1, ts.volMbar);
+        lc.numblock.x = min(256, lc.numblock.x);
+        lc.numblock.y = 1;
+        lc.numblock.z = 1;
+
+        int numActiveBlock = getNumActiveBlock(method, sizeofType, lc);
+        if (numActiveBlock > bestNumActiveBlock) {
+          bestNumActiveBlock = numActiveBlock;
+          bestNumRegStorage = lc.numRegStorage;
+        }
+
+        // lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
+        // if (lc.numRegStorage > MAX_REG_STORAGE) {
+        //   // Find number of threads that works
+        //   lc.numthread.x = (( (ts.volMmk - 1)/MAX_REG_STORAGE)/prop.warpSize + 1)*prop.warpSize;
+        //   lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
+        // }
+      }
+
+      lc.numRegStorage = bestNumRegStorage;
+  */
+
+      lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
+      lc.numthread.x = min(prop.maxThreadsPerBlock, lc.numthread.x);
+      lc.numthread.y = 1;
+      lc.numthread.z = 1;
+      lc.numblock.x = max(1, ts.volMbar);
+      lc.numblock.x = min(256, lc.numblock.x);
+      lc.numblock.y = 1;
+      lc.numblock.z = 1;
+
+      lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
+      if (lc.numRegStorage > MAX_REG_STORAGE) {
+        // Find number of threads that works
+        lc.numthread.x = (( (ts.volMmk - 1)/MAX_REG_STORAGE)/prop.warpSize + 1)*prop.warpSize;
+        lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
+      }
+
+      // Check that we're not using too many threads or register storage
+      //if (lc.numthread.x > prop.maxThreadsPerBlock || lc.numRegStorage > MAX_REG_STORAGE) return 0;
 
     }
     break;
     case cuttPlan_t::TiledSingleRank:
     {
-      plan.numthread.x = TILEDIM;
-      plan.numthread.y = TILEROWS;
-      plan.numthread.z = 1;
-      // plan.numblock.x = 1;
-      // plan.numblock.y = 1;
-      plan.numblock.x = (plan.volMm - 1)/TILEDIM + 1;
-      plan.numblock.y = (plan.volMk - 1)/TILEDIM + 1;
-      plan.numblock.z = plan.volMbar;
-      plan.numblock.z = min(128/(plan.numblock.x*plan.numblock.y), plan.numblock.z);
-      plan.numblock.z = max(1, plan.numblock.z);
-      plan.shmemsize = 0;
-      plan.numRegStorage = 0;
+      lc.numthread.x = TILEDIM;
+      lc.numthread.y = TILEROWS;
+      lc.numthread.z = 1;
+      lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
+      lc.numblock.y = (ts.volMk - 1)/TILEDIM + 1;
+      lc.numblock.z = ts.volMbar;
+      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
+      lc.numblock.z = max(1, lc.numblock.z);
+      lc.shmemsize = 0;
+      lc.numRegStorage = 0;
     }
     break;
     case cuttPlan_t::TiledLeadVolSame:
     {
-      plan.numthread.x = TILEDIM;
-      plan.numthread.y = TILEROWS;
-      plan.numthread.z = 1;
-      plan.numblock.x = (plan.readVol.x - 1)/TILEDIM + 1;
-      plan.numblock.y = (plan.readVol.y - 1)/TILEDIM + 1;
-      plan.numblock.z = plan.volMbar;
-      plan.numblock.z = min(256/(plan.numblock.x*plan.numblock.y), plan.numblock.z);
-      plan.numblock.z = max(1, plan.numblock.z);
-      plan.shmemsize = 0;
-      plan.numRegStorage = 0;
+      lc.numthread.x = TILEDIM;
+      lc.numthread.y = TILEROWS;
+      lc.numthread.z = 1;
+      lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
+      lc.numblock.y = (ts.volMkBar - 1)/TILEDIM + 1;
+      lc.numblock.z = ts.volMbar;
+      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
+      lc.numblock.z = max(1, lc.numblock.z);
+      lc.shmemsize = 0;
+      lc.numRegStorage = 0;
     }
     break;
   }
 
-  plan.numblock.x = min(65535, plan.numblock.x);
-  plan.numblock.y = min(65535, plan.numblock.y);
-  plan.numblock.z = min(65535, plan.numblock.z);
-
-  // printf("numthread %d %d %d numblock %d %d %d shmemsize %d numRegStorage %d\n",
-  //   plan.numthread.x, plan.numthread.y, plan.numthread.z,
-  //   plan.numblock.x, plan.numblock.y, plan.numblock.z,
-  //   plan.shmemsize, plan.numRegStorage);
+  if (lc.numblock.x > prop.maxGridSize[0] ||
+    lc.numblock.y > prop.maxGridSize[1] ||
+    lc.numblock.z > prop.maxGridSize[2]) return 0;
 
   // Return the number of active blocks with these settings
-  return getNumActiveBlock(plan);
+  return getNumActiveBlock(method, sizeofType, lc);
 }
 
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
 
+  LaunchConfig& lc = plan.launchConfig;
+  TensorSplit& ts = plan.tensorSplit;
+
+#if 0
   printf("numthread %d %d %d numblock %d %d %d shmemsize %d numRegStorage %d\n",
-    plan.numthread.x, plan.numthread.y, plan.numthread.z,
-    plan.numblock.x, plan.numblock.y, plan.numblock.z,
-    plan.shmemsize, plan.numRegStorage);
+    lc.numthread.x, lc.numthread.y, lc.numthread.z,
+    lc.numblock.x, lc.numblock.y, lc.numblock.z,
+    lc.shmemsize, lc.numRegStorage);
+#endif
 
   switch(plan.method) {
     case cuttPlan_t::General:
     {
-      switch(plan.numRegStorage) {
+      switch(lc.numRegStorage) {
 #define CALL(TYPE, NREG) \
-    transposeGeneral<TYPE, NREG> <<< plan.numblock, plan.numthread, plan.shmemsize, plan.stream >>> \
-      (plan.volMm, plan.volMk, plan.volMmk, plan.volMbar, \
-      plan.sizeMmk, plan.sizeMbar, \
+    transposeGeneral<TYPE, NREG> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+      (ts.volMm, ts.volMk, ts.volMmk, ts.volMbar, \
+      ts.sizeMmk, ts.sizeMbar, \
       plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut)
         case 1:
         if (plan.sizeofType == 4) CALL(float,  1);
@@ -656,7 +690,7 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
         if (plan.sizeofType == 8) CALL(double, 8);
         break;
         default:
-        printf("cuttKernel no template implemented for numRegStorage %d\n", plan.numRegStorage);
+        printf("cuttKernel no template implemented for numRegStorage %d\n", lc.numRegStorage);
         return false;
 #undef CALL
       }
@@ -667,8 +701,8 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     case cuttPlan_t::TiledSingleRank:
     {
 #define CALL(TYPE) \
-      transposeTiledSingleRank<TYPE> <<< plan.numblock, plan.numthread, 0, plan.stream >>> \
-      (plan.volMbar, plan.sizeMbar, plan.readVol, plan.cuDimMk, plan.cuDimMm, \
+      transposeTiledSingleRank<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
+      (ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
         plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
 
       // dim3 numthread(TILEDIM, TILEROWS, 1);
@@ -688,8 +722,8 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     case cuttPlan_t::TiledLeadVolSame:
     {
 #define CALL(TYPE) \
-      transposeTiledLeadVolSame<TYPE> <<< plan.numblock, plan.numthread, 0, plan.stream >>> \
-      (plan.volMbar, plan.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.readVol, \
+      transposeTiledLeadVolSame<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
+      (ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol, \
         plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
 
       // dim3 numthread(TILEDIM, TILEROWS, 1);

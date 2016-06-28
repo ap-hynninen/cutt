@@ -59,6 +59,8 @@ bool bench2(int numElem, std::vector<double>& bandwidths);
 bool bench3(int numElem, std::vector<double>& bandwidths,
   std::vector<double>& min_bandwidths, std::vector<double>& max_bandwidths,
   std::vector<TensorConfig>& tensorConfig);
+bool bench4();
+
 void getRandomDim(double vol, std::vector<int>& dim);
 template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation, double& bandwidth_ave);
 void printDim(std::vector<int>& dim);
@@ -133,6 +135,8 @@ int main(int argc, char *argv[]) {
     printf("permutation\n");
     printPermutation(tensorConfig[i].permutation);
   }
+
+  // if (!bench4()) goto fail;
 
   printf("bench OK\n");
   goto end;
@@ -246,6 +250,313 @@ bool bench3(int numElem, std::vector<double>& bandwidths, std::vector<double>& m
     }
     bandwidths[i] /= 10.0;
   }
+
+  return true;
+}
+
+//
+// Benchmark 4: specific examples
+//
+bool bench4() {
+  {
+    // rank 7 bandwidth 38.99
+    // dimensions
+    // 2 33 25 13 25 10 28 
+    // permutation
+    // 3-4-2-6-1-5-7 
+    std::vector<int> dim(7);
+    dim[0] = 2;
+    dim[1] = 33;
+    dim[2] = 25;
+    dim[3] = 13;
+    dim[4] = 25;
+    dim[5] = 10;
+    dim[6] = 28;
+    std::vector<int> permutation(7);
+    permutation[0] = 3 - 1;
+    permutation[1] = 4 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 6 - 1;
+    permutation[4] = 1 - 1;
+    permutation[5] = 5 - 1;
+    permutation[6] = 7 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    std::vector<int> dim(2);
+    std::vector<int> permutation(2);
+    dim[0] = 65536*32;
+    dim[1] = 2;
+    permutation[0] = 1;
+    permutation[1] = 0;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+    
+    permutation[0] = 0;
+    permutation[1] = 1;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 7 bandwidth 17.47
+    // dimensions
+    // 8 17 24 6 18 20 20 
+    // permutation
+    // 1-4-2-7-3-5-6 
+    std::vector<int> dim(7);
+    dim[0] = 8;
+    dim[1] = 17;
+    dim[2] = 24;
+    dim[3] = 6;
+    dim[4] = 18;
+    dim[5] = 20;
+    dim[6] = 20;
+    std::vector<int> permutation(7);
+    permutation[0] = 1 - 1;
+    permutation[1] = 4 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 7 - 1;
+    permutation[4] = 3 - 1;
+    permutation[5] = 5 - 1;
+    permutation[6] = 6 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 6 bandwidth 20.89
+    // dimensions
+    // 4 20 33 40 47 36 
+    // permutation
+    // 1-6-2-5-3-4 
+    std::vector<int> dim(6);
+    dim[0] = 4;
+    dim[1] = 20;
+    dim[2] = 33;
+    dim[3] = 40;
+    dim[4] = 47;
+    dim[5] = 36;
+    std::vector<int> permutation(6);
+    permutation[0] = 1 - 1;
+    permutation[1] = 6 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 5 - 1;
+    permutation[4] = 3 - 1;
+    permutation[5] = 4 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 8 bandwidth 20.10
+    // dimensions
+    // 9 21 7 19 7 4 23 9 
+    // permutation
+    // 5-1-2-4-6-3-8-7 
+    std::vector<int> dim(8);
+    dim[0] = 9;
+    dim[1] = 21;
+    dim[2] = 7;
+    dim[3] = 19;
+    dim[4] = 7;
+    dim[5] = 4;
+    dim[6] = 23;
+    dim[7] = 9;
+    std::vector<int> permutation(8);
+    permutation[0] = 5 - 1;
+    permutation[1] = 1 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 4 - 1;
+    permutation[4] = 6 - 1;
+    permutation[5] = 3 - 1;
+    permutation[6] = 8 - 1;
+    permutation[7] = 7 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 6 bandwidth 37.19
+    // dimensions
+    // 60 36 33 4 31 19 
+    // permutation
+    // 4-2-5-6-1-3 
+    std::vector<int> dim(6);
+    dim[0] = 60;
+    dim[1] = 36;
+    dim[2] = 33;
+    dim[3] = 4;
+    dim[4] = 31;
+    dim[5] = 19;
+    std::vector<int> permutation(6);
+    permutation[0] = 4 - 1;
+    permutation[1] = 2 - 1;
+    permutation[2] = 5 - 1;
+    permutation[3] = 6 - 1;
+    permutation[4] = 1 - 1;
+    permutation[5] = 3 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 6 bandwidth 46.02
+    // dimensions
+    // 36 45 8 46 7 45 
+    // permutation
+    // 5-6-2-1-4-3 
+    std::vector<int> dim(6);
+    dim[0] = 36;
+    dim[1] = 45;
+    dim[2] = 8;
+    dim[3] = 46;
+    dim[4] = 7;
+    dim[5] = 45;
+    std::vector<int> permutation(6);
+    permutation[0] = 5 - 1;
+    permutation[1] = 6 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 1 - 1;
+    permutation[4] = 4 - 1;
+    permutation[5] = 3 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 4 bandwidth 31.51
+    // dimensions
+    // 35 52 320 329 
+    // permutation
+    // 4-3-2-1 
+    std::vector<int> dim(4);
+    dim[0] = 35;
+    dim[1] = 52;
+    dim[2] = 320;
+    dim[3] = 329;
+    std::vector<int> permutation(4);
+    permutation[0] = 4 - 1;
+    permutation[1] = 3 - 1;
+    permutation[2] = 2 - 1;
+    permutation[3] = 1 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 7 bandwidth 34.16
+    // dimensions
+    // 25 19 15 19 16 23 3 
+    // permutation
+    // 7-5-3-6-2-1-4 
+    std::vector<int> dim(7);
+    dim[0] = 25;
+    dim[1] = 19;
+    dim[2] = 15;
+    dim[3] = 19;
+    dim[4] = 16;
+    dim[5] = 23;
+    dim[6] = 3;
+    std::vector<int> permutation(7);
+    permutation[0] = 7 - 1;
+    permutation[1] = 5 - 1;
+    permutation[2] = 3 - 1;
+    permutation[3] = 6 - 1;
+    permutation[4] = 2 - 1;
+    permutation[5] = 1 - 1;
+    permutation[6] = 4 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+  {
+    // rank 7 bandwidth 33.98
+    // dimensions
+    // 3 17 24 24 10 22 22 
+    // permutation
+    // 1-7-4-6-3-2-5 
+    std::vector<int> dim(7);
+    dim[0] = 3;
+    dim[1] = 17;
+    dim[2] = 24;
+    dim[3] = 24;
+    dim[4] = 10;
+    dim[5] = 22;
+    dim[6] = 22;
+    std::vector<int> permutation(7);
+    permutation[0] = 1 - 1;
+    permutation[1] = 7 - 1;
+    permutation[2] = 4 - 1;
+    permutation[3] = 6 - 1;
+    permutation[4] = 3 - 1;
+    permutation[5] = 2 - 1;
+    permutation[6] = 5 - 1;
+    double bandwidth;
+    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    printf("dimensions\n");
+    printDim(dim);
+    printf("permutation\n");
+    printPermutation(permutation);
+    printf("bandwidth %4.2lf\n", bandwidth);
+  }
+
+// rank 15 bandwidth 27.19
+// dimensions
+// 4 4 4 3 3 2 4 4 4 3 4 3 4 4 4 
+// permutation
+// 6-7-9-13-5-4-11-10-14-3-1-15-2-8-12 
 
   return true;
 }

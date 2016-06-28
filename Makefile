@@ -44,7 +44,7 @@ OS = linux
 endif
 
 ifeq ($(shell uname -a|grep titan|wc -l), 1)
-OS = titan
+OS = linux
 endif
 
 ifeq ($(shell uname -a|grep Darwin|wc -l), 1)
@@ -81,6 +81,7 @@ create_build:
 
 lib/libcutt.a: $(OBJSLIB)
 	mkdir -p lib
+	rm -f lib/libcutt.a
 	ar -cvq lib/libcutt.a $(OBJSLIB)
 	mkdir -p include
 	cp -f src/cutt.h include/cutt.h
@@ -106,8 +107,10 @@ clean:
 
 build/%.o : src/%.cu
 	$(CUDAC) -c $(CUDA_CFLAGS) -o build/$*.o $<
-	$(CUDAC) -M $(CUDA_CFLAGS) $< > build/$*.d
+	echo -n "build/" > build/$*.d
+	$(CUDAC) -M $(CUDA_CFLAGS) $< >> build/$*.d
 
 build/%.o : src/%.cpp
 	$(CC) -c $(CFLAGS) -o build/$*.o $<
-	$(CC) -M $(CFLAGS) $< > build/$*.d
+	echo -n "build/" > build/$*.d
+	$(CC) -M $(CFLAGS) $< >> build/$*.d

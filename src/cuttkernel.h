@@ -3,7 +3,8 @@
 #include "cuttplan.h"
 
 void cuttKernelSetSharedMemConfig();
-int cuttKernelLaunchConfiguration(cuttPlan_t& plan, cudaDeviceProp& prop);
+int cuttKernelLaunchConfiguration(int method, int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
+  LaunchConfig& lc);
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut);
 
 #endif // CUTTKERNEL_H

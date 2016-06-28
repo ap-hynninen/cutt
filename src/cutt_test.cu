@@ -87,8 +87,8 @@ int main(int argc, char *argv[]) {
   tester = new TensorTester();
   tester->setTensorCheckPattern((unsigned int *)dataIn, dataSize*2);
 
-  // if (!test1()) goto fail;
-  // if (!test2()) goto fail;
+  if (!test1()) goto fail;
+  if (!test2()) goto fail;
   if (!test3()) goto fail;
 
   printf("test OK\n");
@@ -130,21 +130,20 @@ bool test1() {
 }
 
 //
-// Test 2: Test ranks 2-15, random size, random permutation, random dimensions
+// Test 2: Test ranks 2-15, random volume, random permutation, random dimensions
 //         100 samples each rank
 //
 bool test2() {
-  const int minDim = 2;
-  const int maxDim = 256;
+  double minDim = 2.0;
+  double maxDim = 256;
 
   std::srand(unsigned (std::time(0)));
 
   for (int rank = 2;rank <= 15;rank++) {
+    double volmin = pow(minDim+1, rank);
+    double volmax = (double)dataSize;
 
     for (int isample=0;isample < 100;isample++) {
-      long long int volmin = minDim << rank;
-      long long int volmax = dataSize;
-      // int vol = (int)(volmin + (volmax - volmin)*((long long int)rand())/((long long int)RAND_MAX) );
 
       std::vector<int> dim(rank);
       std::vector<int> permutation(rank);
@@ -158,19 +157,38 @@ bool test2() {
         int subiter = 0;
         do {
           for (int r=0;r < rank;r++) {
-            dim[r] = minDim + ((long long int)(maxDim - minDim))*((long long int)rand())/((long long int)RAND_MAX);
+            double vol_left = vol/(curvol*pow(minDim, (double)(rank-r)));
+            double aveDim = pow(vol, 1.0/(double)rank);
+            double dimSpread = (aveDim - minDim);
+            // rn = -1 ... 1
+            double rn = 2.0*(((double)rand())/((double)RAND_MAX) - 0.5);
+            dim[r] = (int)(aveDim + dimSpread*rn);
             curvol *= (double)dim[r];
           }
 
+          // printf("vol %lf curvol %lf\n", vol, curvol);
+          // printf("dim");
+          // for (int r=0;r < rank;r++) printf(" %d", dim[r]);
+          // printf("\n");
+
           double vol_scale = pow(vol/curvol, 1.0/(double)rank);
+          // printf("vol_scale %lf\n", vol_scale);
           curvol = 1.0;
           for (int r=0;r < rank;r++) {
-            dim[r] = max(2, (int)(dim[r]*vol_scale));
+            dim[r] = max(2, (int)round((double)dim[r]*vol_scale));
             curvol *= dim[r];
           }
-        } while (subiter < 50 && (curvol > volmax || fabs(curvol-vol)/(double)vol > 0.3));
 
-        // printf("vol %d curvol %lf\n", vol, curvol);
+          // printf("vol %lf curvol %lf\n", vol, curvol);
+          // printf("dim");
+          // for (int r=0;r < rank;r++) printf(" %d", dim[r]);
+          // printf("\n");
+          // return false;
+
+          subiter++;
+        } while (subiter < 50 && (curvol > volmax || fabs(curvol-vol)/(double)vol > 2.3));
+
+        // printf("vol %lf curvol %lf volmin %lf volmax %lf\n", vol, curvol, volmin, volmax);
         // printf("dim");
         // for (int r=0;r < rank;r++) printf(" %d", dim[r]);
         // printf("\n");
@@ -181,7 +199,7 @@ bool test2() {
           printf("Unable to determine dimensions in 1000 iterations\n");
           return false;
         }
-      } while (curvol > volmax || fabs(curvol-vol)/(double)vol > 0.3);
+      } while (curvol > volmax || fabs(curvol-vol)/(double)vol > 2.3);
 
       std::random_shuffle(permutation.begin(), permutation.end());
 
@@ -281,6 +299,40 @@ bool test3() {
     permutation[5] = 5;
     if (!test_tensor<long long int>(dim, permutation)) return false;
     if (!test_tensor<int>(dim, permutation)) return false;    
+  }
+
+  {
+    std::vector<int> dim(5);
+    std::vector<int> permutation(5);
+    dim[0] = 5;
+    dim[1] = 42;
+    dim[2] = 75;
+    dim[3] = 86;
+    dim[4] = 57;
+    permutation[0] = 2 - 1;
+    permutation[1] = 4 - 1;
+    permutation[2] = 5 - 1;
+    permutation[3] = 3 - 1;
+    permutation[4] = 1 - 1;
+    if (!test_tensor<long long int>(dim, permutation)) return false;
+    if (!test_tensor<int>(dim, permutation)) return false;        
+  }
+
+  {
+    std::vector<int> dim(5);
+    std::vector<int> permutation(5);
+    dim[0] = 5;
+    dim[1] = 3;
+    dim[2] = 2;
+    dim[3] = 9;
+    dim[4] = 14;
+    permutation[0] = 0;
+    permutation[1] = 1;
+    permutation[2] = 3;
+    permutation[3] = 2;
+    permutation[4] = 4;
+    if (!test_tensor<long long int>(dim, permutation)) return false;
+    if (!test_tensor<int>(dim, permutation)) return false;        
   }
 
   return true;

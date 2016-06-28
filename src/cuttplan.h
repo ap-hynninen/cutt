@@ -33,7 +33,91 @@ SOFTWARE.
 const int TILEDIM = 32;
 const int TILEROWS = 8;
 
-// Structure that stores the plan data
+// Tells how tensor is split into Mm and Mk
+// NOTE: sizeMm and sizeMk fully define the split
+class TensorSplit {
+public:
+  // Input volume
+  int sizeMm;
+  int volMm;
+
+  // Output volume
+  int sizeMk;
+  int volMk;
+
+  // {Input} U {Output}
+  int sizeMmk;
+  int volMmk;
+
+  // {Input} CUT {Output} = Mk which is not in Mm
+  int sizeMkBar;
+  int volMkBar;
+
+  // Remaining volume
+  int sizeMbar;
+  int volMbar;
+
+  void print() {
+    printf("sizeMm %d sizeMk %d sizeMmk %d sizeMbar %d sizeMkBar %d\n",
+      sizeMm, sizeMk, sizeMmk, sizeMbar, sizeMkBar);
+    printf("volMm %d volMk %d volMmk %d volMbar %d volMkBar %d\n",
+      volMm, volMk, volMmk, volMbar, volMkBar);
+  }
+
+  void update(const int sizeMm_in, const int sizeMk_in, const int rank,
+    const int* dim, const int* permutation) {
+
+    sizeMm = sizeMm_in;
+    sizeMk = sizeMk_in;
+
+    // First sizeMm are in Mm
+    volMm = 1;
+    for (int i=0;i < sizeMm;i++) {
+      volMm *= dim[i];
+    }
+    // First sizeMk in permuted order are in Mk
+    volMk = 1;
+    for (int i=0;i < sizeMk;i++) {
+      volMk *= dim[permutation[i]];
+    }
+
+    int vol = 1;
+    volMmk = 1;
+    sizeMmk = 0;
+    volMkBar = 1;
+    sizeMkBar = 0;
+    for (int i=0;i < rank;i++) {
+      int pi = permutation[i];
+      if (i < sizeMm) {
+        volMmk *= dim[i];
+        sizeMmk++;
+      }
+      if (i < sizeMk && pi >= sizeMm) {
+        volMmk *= dim[pi];
+        sizeMmk++;
+        volMkBar *= dim[pi];
+        sizeMkBar++;
+      }
+      vol *= dim[i];
+    }
+
+    sizeMbar = rank - sizeMmk;
+    volMbar = vol/volMmk;
+  }
+};
+
+class LaunchConfig {
+public:
+ // Kernel launch configuration
+  dim3 numthread;
+  dim3 numblock;
+  size_t shmemsize;
+
+  // For the General method, number of registers to use for storage
+  int numRegStorage;
+ };
+
+// Class that stores the plan data
 class cuttPlan_t {
 public:
   // Device for which this plan was made
@@ -49,12 +133,15 @@ public:
   cudaStream_t stream;
 
   // Kernel launch configuration
-  dim3 numthread;
-  dim3 numblock;
-  size_t shmemsize;
+  LaunchConfig launchConfig;
 
-  // For the General method, number of registers to use for storage
-  int numRegStorage;
+  // // Kernel launch configuration
+  // dim3 numthread;
+  // dim3 numblock;
+  // size_t shmemsize;
+
+  // // For the General method, number of registers to use for storage
+  // int numRegStorage;
   
   // Rank of the tensor
   int rank;
@@ -62,21 +149,23 @@ public:
   // Size of elements in tensor
   size_t sizeofType;
 
-  // Input volume
-  int sizeMm;
-  int volMm;
+  TensorSplit tensorSplit;
 
-  // Output volume
-  int sizeMk;
-  int volMk;
+  // // Input volume
+  // int sizeMm;
+  // int volMm;
 
-  // {Input} U {Output}
-  int sizeMmk;
-  int volMmk;
+  // // Output volume
+  // int sizeMk;
+  // int volMk;
 
-  // Remaining volume
-  int sizeMbar;
-  int volMbar;
+  // // {Input} U {Output}
+  // int sizeMmk;
+  // int volMmk;
+
+  // // Remaining volume
+  // int sizeMbar;
+  // int volMbar;
 
   int cuDimMk;
   int cuDimMm;
@@ -85,8 +174,7 @@ public:
   enum {Unknown, General, TiledSingleRank, TiledLeadVolSame};
   int method;
 
-  int2 readVol;
-  // int2 writeVol;
+  int2 tiledVol;
 
   // sizeMbar
   TensorConvInOut* Mbar;
@@ -101,11 +189,15 @@ public:
   ~cuttPlan_t();
   void setStream(cudaStream_t stream_in);
   bool setup(const int rank_in, const int* dim, const int* permutation, const size_t sizeofType_in);
+  // bool setupOLD(const int rank_in, const int* dim, const int* permutation, const size_t sizeofType_in);
 private:
-  void setupMm(std::vector<bool>& isMm, const int* dim);
-  void setupMk(std::vector<bool>& isMk, const int* dim);
-  void setupMmk(std::vector<bool>& isMm, std::vector<bool>& isMk, const int* dim);
-  void setupMbar(std::vector<bool>& isMm, std::vector<bool>& isMk, const int* dim);
+  void setupTiledSingleRank(const int* dim, const int* permutation, TensorSplit& ts);
+  void setupTiledLeadVolSame(const int* dim, const int* permutation, TensorSplit& ts);
+  void setupGeneral(const int* dim, const int* permutation, cudaDeviceProp& prop, TensorSplit& ts);
+  // void setupMm(std::vector<bool>& isMm, const int* dim);
+  // void setupMk(std::vector<bool>& isMk, const int* dim);
+  // void setupMmk(std::vector<bool>& isMm, std::vector<bool>& isMk, const int* dim);
+  // void setupMbar(std::vector<bool>& isMm, std::vector<bool>& isMk, const int* dim);
 };
 
 #endif // CUTTPLAN_H

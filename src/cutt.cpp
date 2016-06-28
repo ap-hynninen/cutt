@@ -51,9 +51,17 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
     if (dim[i] <= 1) return CUTT_INVALID_PARAMETER;
   }
   // Check permutation
+  bool permutation_fail = false;
+  int* check = new int[rank];
+  for (int i=0;i < rank;i++) check[i] = 0;
   for (int i=0;i < rank;i++) {
-    if (permutation[i] < 0 || permutation[i] >= rank) return CUTT_INVALID_PARAMETER;
+    if (permutation[i] < 0 || permutation[i] >= rank || check[permutation[i]]++) {
+      permutation_fail = true;
+      break;
+    }
   }
+  delete [] check;
+  if (permutation_fail) return CUTT_INVALID_PARAMETER;
 
   // Create new handle
   *handle = curHandle;
@@ -64,7 +72,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 
   // Create new plan
   cuttPlan_t* plan = new cuttPlan_t();
-  plan->setup(rank, dim, permutation, sizeofType);
+  if (!plan->setup(rank, dim, permutation, sizeofType)) return CUTT_INTERNAL_ERROR;
 
   // Insert plan into storage
   plans.insert( {*handle, plan} );

@@ -3,6 +3,12 @@ cuTT - CUDA Tensor Transpose
 
 cuTT is a high performance tensor transpose library for NVIDIA GPUs. It works with Kepler (SM 3.0) and above GPUs.
 
+Copyright (c) 2016 Antti-Pekka Hynninen
+ * hynninena@ornl.gov
+ * aphynninen@hotmail.com
+
+Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
+
 Version 1.0
 
 Installation
@@ -137,6 +143,11 @@ cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream);
 //
 cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata);
 ```
+
+TODO
+====
+ * Fix TiledSingleRank and TiledLeadVolSame for the case where numblock > 65535
+ * Test TiledLeadVolSame when Mm and Mk have multiple ranks
 
 Licence
 =======
