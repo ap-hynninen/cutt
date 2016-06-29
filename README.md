@@ -4,8 +4,6 @@ cuTT - CUDA Tensor Transpose
 cuTT is a high performance tensor transpose library for NVIDIA GPUs. It works with Kepler (SM 3.0) and above GPUs.
 
 Copyright (c) 2016 Antti-Pekka Hynninen
- * hynninena@ornl.gov
- * aphynninen@hotmail.com
 
 Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
 
