@@ -29,6 +29,7 @@ SOFTWARE.
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
+#include "cuttTimer.h"
 
 #define MILLION 1000000
 #define BILLION 1000000000
@@ -44,27 +45,22 @@ SOFTWARE.
   }                                                  \
 } while(0)
 
-struct TensorConfig {
-  std::vector<int> dim;
-  std::vector<int> permutation;
-};
-
 long long int* dataIn  = NULL;
 long long int* dataOut = NULL;
 int dataSize  = 250*MILLION;
 TensorTester* tester = NULL;
 
-bool bench1(int numElem, std::vector<double>& bandwidths);
-bool bench2(int numElem, std::vector<double>& bandwidths);
-bool bench3(int numElem, std::vector<double>& bandwidths,
-  std::vector<double>& min_bandwidths, std::vector<double>& max_bandwidths,
-  std::vector<TensorConfig>& tensorConfig);
+cuttTimer timerFloat(4);
+cuttTimer timerDouble(8);
+
+bool bench1(int numElem);
+bool bench2(int numElem);
+bool bench3(int numElem);
 bool bench4();
 
 void getRandomDim(double vol, std::vector<int>& dim);
-template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation, double& bandwidth_ave);
-void printDim(std::vector<int>& dim);
-void printPermutation(std::vector<int>& permutation);
+template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation);
+void printVec(std::vector<int>& vec);
 
 int main(int argc, char *argv[]) {
 
@@ -102,10 +98,8 @@ int main(int argc, char *argv[]) {
   tester = new TensorTester();
   tester->setTensorCheckPattern((unsigned int *)dataIn, dataSize*2);
 
-  std::vector<double> bandwidths;
-  std::vector<double> min_bandwidths;
-  std::vector<double> max_bandwidths;
-  std::vector<TensorConfig> tensorConfig;
+  std::vector<int> worstDim;
+  std::vector<int> worstPermutation;
 
   unsigned seed = unsigned (std::time(0));
   std::srand(seed);
@@ -122,18 +116,23 @@ int main(int argc, char *argv[]) {
   //   printf("%lf\n", bandwidths[i]);
   // }
 
-  if (!bench3(200*MILLION, bandwidths, min_bandwidths, max_bandwidths, tensorConfig)) goto fail;
-  printf("bench3:\n");
-  for (int i=0;i < bandwidths.size();i++) {
-    printf("%4.2lf [%4.2lf %4.2lf]\n", bandwidths[i], min_bandwidths[i], max_bandwidths[i]);
-  }
-  printf("worst configurations:\n");
-  for (int i=0;i < bandwidths.size();i++) {
-    printf("rank %d bandwidth %4.2lf\n", tensorConfig[i].dim.size(), min_bandwidths[i]);
+  if (bench3(200*MILLION)) {
+    printf("bench3:\n");
+    printf("rank <BW>  worst  best\n");
+    for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      double worstBW = timerDouble.getWorst(*it);
+      double bestBW = timerDouble.getBest(*it);
+      double aveBW = timerDouble.getAverage(*it);
+      printf("%2d %6.2lf %6.2lf %6.2lf\n", *it, aveBW, worstBW, bestBW);
+    }
+    double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
+    printf("worst of all %4.2lf rank %d\n", worstBW, worstDim.size());
     printf("dimensions\n");
-    printDim(tensorConfig[i].dim);
+    printVec(worstDim);
     printf("permutation\n");
-    printPermutation(tensorConfig[i].permutation);
+    printVec(worstPermutation);
+  } else {
+    goto fail;
   }
 
   // if (!bench4()) goto fail;
@@ -156,8 +155,7 @@ end:
 //
 // Benchmark 1: ranks 2-8,15 in inverse permutation. 32 start and end dimension
 //
-bool bench1(int numElem, std::vector<double>& bandwidths) {
-  bandwidths.resize(8, 0.0);
+bool bench1(int numElem) {
   int ranks[8] = {2, 3, 4, 5, 6, 7, 8, 15};
   for (int i=0;i <= 7;i++) {
     std::vector<int> dim(ranks[i]);
@@ -185,7 +183,7 @@ bool bench1(int numElem, std::vector<double>& bandwidths) {
       permutation[r] = ranks[i] - 1 - r;
     }
 
-    if (!bench_tensor<long long int>(dim, permutation, bandwidths[i])) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
   }
 
   return true;
@@ -194,8 +192,7 @@ bool bench1(int numElem, std::vector<double>& bandwidths) {
 //
 // Benchmark 2: ranks 2-8,15 in inverse permutation. Even spread of dimensions.
 //
-bool bench2(int numElem, std::vector<double>& bandwidths) {
-  bandwidths.resize(8, 0.0);
+bool bench2(int numElem) {
   int ranks[8] = {2, 3, 4, 5, 6, 7, 8, 15};
   for (int i=0;i <= 7;i++) {
     std::vector<int> dim(ranks[i]);
@@ -213,7 +210,7 @@ bool bench2(int numElem, std::vector<double>& bandwidths) {
       permutation[r] = ranks[i] - 1 - r;
     }
 
-    if (!bench_tensor<long long int>(dim, permutation, bandwidths[i])) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
   }
 
   return true;
@@ -222,14 +219,9 @@ bool bench2(int numElem, std::vector<double>& bandwidths) {
 //
 // Benchmark 3: ranks 2-8,15 in random permutation and dimensions.
 //
-bool bench3(int numElem, std::vector<double>& bandwidths, std::vector<double>& min_bandwidths,
-  std::vector<double>& max_bandwidths, std::vector<TensorConfig>& tensorConfig) {
+bool bench3(int numElem) {
 
   int ranks[8] = {2, 3, 4, 5, 6, 7, 8, 15};
-  bandwidths.resize(8, 0.0);
-  min_bandwidths.resize(8, 1.0e20);
-  max_bandwidths.resize(8, -1.0);
-  tensorConfig.resize(8);
 
   for (int i=0;i <= 7;i++) {
     std::vector<int> dim(ranks[i]);
@@ -238,17 +230,8 @@ bool bench3(int numElem, std::vector<double>& bandwidths, std::vector<double>& m
     for (int nsample=0;nsample < 10;nsample++) {
       std::random_shuffle(permutation.begin(), permutation.end());
       getRandomDim((double)numElem, dim);
-      double bandwidth;
-      if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
-      if (bandwidth < min_bandwidths[i]) {
-        tensorConfig[i].dim = dim;
-        tensorConfig[i].permutation = permutation;
-      }
-      min_bandwidths[i] = std::min(min_bandwidths[i], bandwidth);
-      max_bandwidths[i] = std::max(max_bandwidths[i], bandwidth);
-      bandwidths[i] += bandwidth;
+      if (!bench_tensor<long long int>(dim, permutation)) return false;
     }
-    bandwidths[i] /= 10.0;
   }
 
   return true;
@@ -280,13 +263,12 @@ bool bench4() {
     permutation[4] = 1 - 1;
     permutation[5] = 5 - 1;
     permutation[6] = 7 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -296,22 +278,21 @@ bool bench4() {
     dim[1] = 2;
     permutation[0] = 1;
     permutation[1] = 0;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
     
     permutation[0] = 0;
     permutation[1] = 1;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -336,13 +317,12 @@ bool bench4() {
     permutation[4] = 3 - 1;
     permutation[5] = 5 - 1;
     permutation[6] = 6 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -365,13 +345,12 @@ bool bench4() {
     permutation[3] = 5 - 1;
     permutation[4] = 3 - 1;
     permutation[5] = 4 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -398,13 +377,12 @@ bool bench4() {
     permutation[5] = 3 - 1;
     permutation[6] = 8 - 1;
     permutation[7] = 7 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -427,13 +405,12 @@ bool bench4() {
     permutation[3] = 6 - 1;
     permutation[4] = 1 - 1;
     permutation[5] = 3 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -456,13 +433,12 @@ bool bench4() {
     permutation[3] = 1 - 1;
     permutation[4] = 4 - 1;
     permutation[5] = 3 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -481,13 +457,12 @@ bool bench4() {
     permutation[1] = 3 - 1;
     permutation[2] = 2 - 1;
     permutation[3] = 1 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -512,13 +487,12 @@ bool bench4() {
     permutation[4] = 2 - 1;
     permutation[5] = 1 - 1;
     permutation[6] = 4 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
   {
@@ -543,13 +517,12 @@ bool bench4() {
     permutation[4] = 3 - 1;
     permutation[5] = 2 - 1;
     permutation[6] = 5 - 1;
-    double bandwidth;
-    if (!bench_tensor<long long int>(dim, permutation, bandwidth)) return false;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
-    printDim(dim);
+    printVec(dim);
     printf("permutation\n");
-    printPermutation(permutation);
-    printf("bandwidth %4.2lf\n", bandwidth);
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
 // rank 15 bandwidth 27.19
@@ -594,7 +567,7 @@ void getRandomDim(double vol, std::vector<int>& dim) {
 }
 
 template <typename T>
-bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation, double& bandwidth_ave) {
+bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   int rank = dim.size();
 
@@ -612,46 +585,41 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation, double& 
 
   printf("number of elements %d\n", vol);
   printf("dimensions\n");
-  printDim(dim);
+  printVec(dim);
   printf("permutation\n");
-  printPermutation(permutation);
+  printVec(permutation);
 
   cuttHandle plan;
   cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
 
-  bandwidth_ave = 0.0;
+  cuttTimer* timer;
+  if (sizeof(T) == 4) {
+    timer = &timerFloat;
+  } else {
+    timer = &timerDouble;
+  }
+
   for (int i=0;i < 4;i++) {
     clear_device_array<T>((T *)dataOut, vol);
     cudaCheck(cudaDeviceSynchronize());
 
-    struct timespec now, tmstart;
-    clock_gettime(CLOCK_REALTIME, &tmstart);
+    timer->start(dim, permutation);
 
     cuttCheck(cuttExecute(plan, dataIn, dataOut));
     cudaCheck(cudaDeviceSynchronize());
   
-    clock_gettime(CLOCK_REALTIME, &now);
-    double seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
-    double bandwidth = (double)(vol*sizeof(T)*2)/((double)BILLION*seconds);
-    printf("wall time %lfms %lf GB/s\n", seconds*1000.0, bandwidth);
-    bandwidth_ave += bandwidth;
+    timer->stop();
+
+    printf("wall time %lfms %lf GB/s\n", timer->seconds()*1000.0, timer->GBs());
   }
-  bandwidth_ave /= 4.0;
 
   cuttCheck(cuttDestroy(plan));
   return tester->checkTranspose<T>(rank, dim.data(), permutation.data(), (T *)dataOut);
 }
 
-void printDim(std::vector<int>& dim) {
-  for (int i=0;i < dim.size();i++) {
-    printf("%d ", dim[i]);
+void printVec(std::vector<int>& vec) {
+  for (int i=0;i < vec.size();i++) {
+    printf("%d ", vec[i]);
   }
   printf("\n");  
-}
-
-void printPermutation(std::vector<int>& permutation) {
-  for (int i=0;i < permutation.size();i++) {
-    printf("%d%c",permutation[i]+1, (i==permutation.size() - 1) ? ' ' : '-');
-  }
-  printf("\n");
 }

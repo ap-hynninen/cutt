@@ -37,6 +37,16 @@ as well as the test and benchmarks
 
 In order to use cuTT, you only need the include (include/cutt.h) and the library (lib/libcutt.a) files.
 
+Performance
+===========
+
+cuTT was designed with performance as the main goal. Here are performance benchmarks for a random set of tensors with 200M `double` elements with ranks 2 to 8 and 15.
+
+Benchmarks on Titan, which has Tesla K20X with ECC on. For this setup, bandwidth for a simple copy is about 176 GB/s.
+
+![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k20x_june29_2016.png)
+
+
 Usage
 =====
 

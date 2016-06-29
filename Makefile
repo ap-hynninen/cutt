@@ -56,7 +56,7 @@ OPTLEV = -O2
 
 OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/CudaUtils.o
 OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o
-OBJSBENCH = build/cutt_bench.o build/TensorTester.o build/CudaUtils.o
+OBJSBENCH = build/cutt_bench.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
 OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 
 #CUDAROOT = $(subst /bin/,,$(dir $(shell which nvcc)))
@@ -64,7 +64,9 @@ CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
 
 CFLAGS = -I${CUDAROOT}/include -std=gnu++11
 
-CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) -Xcompiler "$(CUDA_CCFLAGS)"
+#CUDA_CCFLAGS = 
+
+CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) --std=c++11 -Xcompiler "$(CUDA_CCFLAGS)"
 
 ifeq ($(OS),osx)
 CUDA_LFLAGS = -L$(CUDAROOT)/lib

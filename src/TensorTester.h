@@ -30,7 +30,7 @@ SOFTWARE.
 // Simple tensor transpose tester class
 //
 
-struct error_t {
+struct TensorError_t {
   int refVal;
   int dataVal;
   unsigned int pos;
@@ -46,8 +46,8 @@ private:
 public:
   TensorConv* h_tensorConv;
   TensorConv* d_tensorConv;
-  error_t* h_error;
-  error_t* d_error;
+  TensorError_t* h_error;
+  TensorError_t* d_error;
   int* d_fail;
 
   TensorTester();

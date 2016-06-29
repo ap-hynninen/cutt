@@ -38,7 +38,7 @@ __global__ void setTensorCheckPatternKernel(unsigned int* data, unsigned int nda
 
 template<typename T>
 __global__ void checkTransposeKernel(T* data, unsigned int ndata, int rank, TensorConv* glTensorConv,
-  error_t* glError, int* glFail) {
+  TensorError_t* glError, int* glFail) {
 
   extern __shared__ unsigned int shPos[];
 
@@ -48,7 +48,7 @@ __global__ void checkTransposeKernel(T* data, unsigned int ndata, int rank, Tens
     tc = glTensorConv[warpLane];
   }
 
-  error_t error;
+  TensorError_t error;
   error.pos = 0xffffffff;
   error.refVal = 0;
   error.dataVal = 0;
@@ -104,9 +104,9 @@ __global__ void checkTransposeKernel(T* data, unsigned int ndata, int rank, Tens
 //
 TensorTester::TensorTester() : maxRank(32), maxNumblock(256) {
   h_tensorConv = new TensorConv[maxRank];
-  h_error      = new error_t[maxNumblock];
+  h_error      = new TensorError_t[maxNumblock];
   allocate_device<TensorConv>(&d_tensorConv, maxRank);
-  allocate_device<error_t>(&d_error, maxNumblock);
+  allocate_device<TensorError_t>(&d_error, maxNumblock);
   allocate_device<int>(&d_fail, 1);
 }
 
@@ -117,7 +117,7 @@ TensorTester::~TensorTester() {
   delete [] h_tensorConv;
   delete [] h_error;
   deallocate_device<TensorConv>(&d_tensorConv);
-  deallocate_device<error_t>(&d_error);
+  deallocate_device<TensorError_t>(&d_error);
   deallocate_device<int>(&d_fail);
 }
 
@@ -183,7 +183,7 @@ template<typename T> bool TensorTester::checkTranspose(int rank, int* dim, int* 
   //   printf("%d %d %d\n", h_tensorConv[i].c, h_tensorConv[i].d, h_tensorConv[i].ct);
   // }
 
-  clear_device_array<error_t>(d_error, maxNumblock);
+  clear_device_array<TensorError_t>(d_error, maxNumblock);
   clear_device_array<int>(d_fail, 1);
 
   int numthread = 512;
@@ -197,8 +197,8 @@ template<typename T> bool TensorTester::checkTranspose(int rank, int* dim, int* 
   cudaCheck(cudaDeviceSynchronize());
 
   if (h_fail) {
-    copy_DtoH_sync<error_t>(d_error, h_error, maxNumblock);
-    error_t error;
+    copy_DtoH_sync<TensorError_t>(d_error, h_error, maxNumblock);
+    TensorError_t error;
     error.pos = 0x0fffffff;
     for (int i=0;i < numblock;i++) {
       // printf("%d %d %d\n", error.pos, error.refVal, error.dataVal);
