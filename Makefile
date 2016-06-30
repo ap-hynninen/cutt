@@ -55,7 +55,7 @@ endif
 OPTLEV = -O2
 
 OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/CudaUtils.o
-OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o
+OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
 OBJSBENCH = build/cutt_bench.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
 OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 

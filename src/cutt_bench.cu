@@ -24,8 +24,6 @@ SOFTWARE.
 *******************************************************************************/
 #include <vector>
 #include <algorithm>
-#include <ctime>
-#include <cstdlib>
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
@@ -57,10 +55,15 @@ bool bench1(int numElem);
 bool bench2(int numElem);
 bool bench3(int numElem);
 bool bench4();
+bool bench_memcpy(int numElem);
 
 void getRandomDim(double vol, std::vector<int>& dim);
 template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation);
 void printVec(std::vector<int>& vec);
+
+template <typename T> void scalarCopy(const int n, const T* data_in, T* data_out, cudaStream_t stream);
+template <typename T> void vectorCopy(const int n, T* data_in, T* data_out, cudaStream_t stream);
+void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream);
 
 int main(int argc, char *argv[]) {
 
@@ -137,7 +140,10 @@ int main(int argc, char *argv[]) {
 
   // if (!bench4()) goto fail;
 
+  if (!bench_memcpy(200*MILLION)) goto fail;
+
   printf("bench OK\n");
+
   goto end;
 fail:
   printf("bench FAIL\n");
@@ -621,5 +627,160 @@ void printVec(std::vector<int>& vec) {
   for (int i=0;i < vec.size();i++) {
     printf("%d ", vec[i]);
   }
-  printf("\n");  
+  printf("\n");
 }
+
+//
+// Benchmarks memory copy. Returns bandwidth in GB/s
+//
+bool bench_memcpy(int numElem) {
+
+  std::vector<int> dim(1, numElem);
+  std::vector<int> permutation(1, 0);
+
+  {
+    cuttTimer timer(8);
+    for (int i=0;i < 4;i++) {
+      clear_device_array<double>((double *)dataOut, numElem);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.start(dim, permutation);
+      scalarCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.stop();
+      // printf("%4.2lf GB/s\n", timer.GBs());
+    }
+    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    printf("scalarCopy %lf GB/s\n", timer.getAverage(1));
+  }
+
+  {
+    cuttTimer timer(8);
+    for (int i=0;i < 4;i++) {
+      clear_device_array<double>((double *)dataOut, numElem);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.start(dim, permutation);
+      vectorCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.stop();
+      // printf("%4.2lf GB/s\n", timer.GBs());
+    }
+    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    printf("vectorCopy %lf GB/s\n", timer.getAverage(1));
+  }
+
+  {
+    cuttTimer timer(8);
+    for (int i=0;i < 4;i++) {
+      clear_device_array<double>((double *)dataOut, numElem);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.start(dim, permutation);
+      memcpyFloat(numElem*2, (float *)dataIn, (float *)dataOut, 0);
+      cudaCheck(cudaDeviceSynchronize());
+      timer.stop();
+      // printf("%4.2lf GB/s\n", timer.GBs());
+    }
+    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    printf("memcpyFloat %lf GB/s\n", timer.getAverage(1));
+  }
+
+  return true;
+}
+
+// -----------------------------------------------------------------------------------
+//
+// Copy using scalar loads and stores
+//
+template <typename T>
+__global__ void scalarCopyKernel(const int n, const T* data_in, T* data_out) {
+
+  for (int i = threadIdx.x + blockIdx.x*blockDim.x;i < n;i += blockDim.x*gridDim.x) {
+    data_out[i] = data_in[i];
+  }
+
+}
+template <typename T>
+void scalarCopy(const int n, const T* data_in, T* data_out, cudaStream_t stream) {
+
+  int numthread = 256;
+  int numblock = (n - 1)/numthread + 1;
+  numblock = min(65535, numblock);
+  // numblock = min(256, numblock);
+
+  scalarCopyKernel<T> <<< numblock, numthread, 0, stream >>>
+  (n, data_in, data_out);
+
+  cudaCheck(cudaGetLastError());
+}
+// -----------------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------------
+//
+// Copy using vectorized loads and stores
+//
+template <typename T>
+__global__ void vectorCopyKernel(const int n, T* data_in, T* data_out) {
+
+  // Maximum vector load is 128 bits = 16 bytes
+  const int vectorLength = 16/sizeof(T);
+
+  int idx = threadIdx.x + blockIdx.x*blockDim.x;
+
+  // Vector elements
+  for (int i = idx;i < n/vectorLength;i += blockDim.x*gridDim.x) {
+    reinterpret_cast<int4*>(data_out)[i] = reinterpret_cast<int4*>(data_in)[i];
+  }
+
+  // Remaining elements
+  for (int i = idx + (n/vectorLength)*vectorLength;i < n;i += blockDim.x*gridDim.x + threadIdx.x) {
+    data_out[i] = data_in[i];
+  }
+
+}
+
+template <typename T>
+void vectorCopy(const int n, T* data_in, T* data_out, cudaStream_t stream) {
+
+  const int vectorLength = 16/sizeof(T);
+
+  int numthread = 256;
+  int numblock = (n/vectorLength - 1)/numthread + 1;
+  numblock = min(65535, numblock);
+  int shmemsize = 0;
+
+  vectorCopyKernel<T> <<< numblock, numthread, shmemsize, stream >>>
+  (n, data_in, data_out);
+
+  cudaCheck(cudaGetLastError());
+}
+// -----------------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------------
+//
+// Copy using vectorized loads and stores
+//
+template <int numElem>
+__global__ void memcpyFloatKernel(const int n, float4 *data_in, float4* data_out) {
+  int index = threadIdx.x + numElem*blockIdx.x*blockDim.x;
+  float4 a[numElem];
+  for (int i=0;i < numElem;i++) {
+    if (index + i*blockDim.x < n) a[i] = data_in[index + i*blockDim.x];
+  }
+  for (int i=0;i < numElem;i++) {
+    if (index + i*blockDim.x < n) data_out[index + i*blockDim.x] = a[i];
+  }
+}
+
+#define NUM_ELEM 2
+void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream) {
+
+  int numthread = 256;
+  int numblock = (n/(4*NUM_ELEM) - 1)/numthread + 1;
+  // numblock = min(65535, numblock);
+  int shmemsize = 0;
+
+  memcpyFloatKernel<NUM_ELEM> <<< numblock, numthread, shmemsize, stream >>>
+  (n/4, (float4 *)data_in, (float4 *)data_out);
+
+  cudaCheck(cudaGetLastError());
+}
+// -----------------------------------------------------------------------------------

@@ -24,11 +24,10 @@ SOFTWARE.
 *******************************************************************************/
 #include <vector>
 #include <algorithm>
-#include <ctime>
-#include <cstdlib>
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
+#include "cuttTimer.h"
 
 //
 // Error checking wrapper for cutt
@@ -46,10 +45,14 @@ long long int* dataOut = NULL;
 int dataSize  = 100000000;
 TensorTester* tester = NULL;
 
+cuttTimer timerFloat(4);
+cuttTimer timerDouble(8);
+
 bool test1();
 bool test2();
 bool test3();
 template <typename T> bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation);
+void printVec(std::vector<int>& vec);
 
 int main(int argc, char *argv[]) {
 
@@ -90,6 +93,17 @@ int main(int argc, char *argv[]) {
   if (!test1()) goto fail;
   if (!test2()) goto fail;
   if (!test3()) goto fail;
+
+  {
+    std::vector<int> worstDim;
+    std::vector<int> worstPermutation;
+    double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
+    printf("worstBW %4.2lf GB/s\n", worstBW);
+    printf("dim\n");
+    printVec(worstDim);
+    printf("permutation\n");
+    printVec(worstPermutation);
+  }
 
   printf("test OK\n");
   goto end;
@@ -135,7 +149,6 @@ bool test1() {
 //
 bool test2() {
   double minDim = 2.0;
-  double maxDim = 256;
 
   std::srand(unsigned (std::time(0)));
 
@@ -357,21 +370,37 @@ bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   printf("number of elements %d\n", vol);
   printf("dimensions\n");
-  for (int r=0;r < rank;r++) {
-    printf("%d ", dim[r]);
-  }
-  printf("\n");
+  printVec(dim);
   printf("permutation\n");
-  for (int r=0;r < rank;r++) {
-    printf("%d%c",permutation[r]+1, (r==rank-1) ? ' ' : '-');
+  printVec(permutation);
+
+  cuttTimer* timer;
+  if (sizeof(T) == 4) {
+    timer = &timerFloat;
+  } else {
+    timer = &timerDouble;
   }
-  printf("\n");
 
   cuttHandle plan;
   cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
   clear_device_array<T>((T *)dataOut, vol);
+  cudaCheck(cudaDeviceSynchronize());
+
+  if (vol > 1000000) timer->start(dim, permutation);
+
   cuttCheck(cuttExecute(plan, dataIn, dataOut));
+  cudaCheck(cudaDeviceSynchronize());
+
+  if (vol > 1000000) timer->stop();
   cuttCheck(cuttDestroy(plan));
 
   return tester->checkTranspose<T>(rank, dim.data(), permutation.data(), (T *)dataOut);
 }
+
+void printVec(std::vector<int>& vec) {
+  for (int i=0;i < vec.size();i++) {
+    printf("%d ", vec[i]);
+  }
+  printf("\n");
+}
+
