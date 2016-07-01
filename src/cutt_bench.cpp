@@ -25,6 +25,7 @@ SOFTWARE.
 #include <vector>
 #include <algorithm>
 #include <cstring>         // strcmp
+#include <cmath>
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
