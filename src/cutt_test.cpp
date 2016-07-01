@@ -24,6 +24,7 @@ SOFTWARE.
 *******************************************************************************/
 #include <vector>
 #include <algorithm>
+#include <cstring>         // strcmp
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
@@ -188,7 +189,7 @@ bool test2() {
           // printf("vol_scale %lf\n", vol_scale);
           curvol = 1.0;
           for (int r=0;r < rank;r++) {
-            dim[r] = max(2, (int)round((double)dim[r]*vol_scale));
+            dim[r] = std::max(2, (int)round((double)dim[r]*vol_scale));
             curvol *= dim[r];
           }
 

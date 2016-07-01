@@ -25,6 +25,8 @@ SOFTWARE.
 #ifndef CUTT_H
 #define CUTT_H
 
+#include <cuda_runtime.h>
+
 // Handle type that is used to store and access cutt plans
 typedef unsigned int cuttHandle;
 

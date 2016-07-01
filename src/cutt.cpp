@@ -23,7 +23,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *******************************************************************************/
 #include <cuda.h>
-#include <cuda_runtime.h>
 #include <unordered_map>
 #include <unordered_set>
 #include "CudaUtils.h"

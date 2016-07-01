@@ -24,10 +24,12 @@ SOFTWARE.
 *******************************************************************************/
 #include <vector>
 #include <algorithm>
+#include <cstring>         // strcmp
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
 #include "cuttTimer.h"
+#include "CudaMemcpy.h"
 
 #define MILLION 1000000
 #define BILLION 1000000000
@@ -60,10 +62,6 @@ bool bench_memcpy(int numElem);
 void getRandomDim(double vol, std::vector<int>& dim);
 template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation);
 void printVec(std::vector<int>& vec);
-
-template <typename T> void scalarCopy(const int n, const T* data_in, T* data_out, cudaStream_t stream);
-template <typename T> void vectorCopy(const int n, T* data_in, T* data_out, cudaStream_t stream);
-void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream);
 
 int main(int argc, char *argv[]) {
 
@@ -537,6 +535,12 @@ bool bench4() {
 // permutation
 // 6-7-9-13-5-4-11-10-14-3-1-15-2-8-12 
 
+// worst of all 59.62 rank 6
+// dimensions
+// 21 30 44 25 19 13 
+// permutation
+// 5 3 4 2 1 0 
+
   return true;
 }
 
@@ -559,7 +563,7 @@ void getRandomDim(double vol, std::vector<int>& dim) {
     double vol_scale = pow(vol/curvol, 1.0/(double)dim.size());
     curvol = 1.0;
     for (int r=0;r < dim.size();r++) {
-      dim[r] = max(2, (int)(dim[r]*vol_scale));
+      dim[r] = std::max(2, (int)(dim[r]*vol_scale));
       curvol *= dim[r];
     }
     // printf("curvol %lf\n", curvol/MILLION);
@@ -686,101 +690,3 @@ bool bench_memcpy(int numElem) {
   return true;
 }
 
-// -----------------------------------------------------------------------------------
-//
-// Copy using scalar loads and stores
-//
-template <typename T>
-__global__ void scalarCopyKernel(const int n, const T* data_in, T* data_out) {
-
-  for (int i = threadIdx.x + blockIdx.x*blockDim.x;i < n;i += blockDim.x*gridDim.x) {
-    data_out[i] = data_in[i];
-  }
-
-}
-template <typename T>
-void scalarCopy(const int n, const T* data_in, T* data_out, cudaStream_t stream) {
-
-  int numthread = 256;
-  int numblock = (n - 1)/numthread + 1;
-  numblock = min(65535, numblock);
-  // numblock = min(256, numblock);
-
-  scalarCopyKernel<T> <<< numblock, numthread, 0, stream >>>
-  (n, data_in, data_out);
-
-  cudaCheck(cudaGetLastError());
-}
-// -----------------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------------
-//
-// Copy using vectorized loads and stores
-//
-template <typename T>
-__global__ void vectorCopyKernel(const int n, T* data_in, T* data_out) {
-
-  // Maximum vector load is 128 bits = 16 bytes
-  const int vectorLength = 16/sizeof(T);
-
-  int idx = threadIdx.x + blockIdx.x*blockDim.x;
-
-  // Vector elements
-  for (int i = idx;i < n/vectorLength;i += blockDim.x*gridDim.x) {
-    reinterpret_cast<int4*>(data_out)[i] = reinterpret_cast<int4*>(data_in)[i];
-  }
-
-  // Remaining elements
-  for (int i = idx + (n/vectorLength)*vectorLength;i < n;i += blockDim.x*gridDim.x + threadIdx.x) {
-    data_out[i] = data_in[i];
-  }
-
-}
-
-template <typename T>
-void vectorCopy(const int n, T* data_in, T* data_out, cudaStream_t stream) {
-
-  const int vectorLength = 16/sizeof(T);
-
-  int numthread = 256;
-  int numblock = (n/vectorLength - 1)/numthread + 1;
-  numblock = min(65535, numblock);
-  int shmemsize = 0;
-
-  vectorCopyKernel<T> <<< numblock, numthread, shmemsize, stream >>>
-  (n, data_in, data_out);
-
-  cudaCheck(cudaGetLastError());
-}
-// -----------------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------------
-//
-// Copy using vectorized loads and stores
-//
-template <int numElem>
-__global__ void memcpyFloatKernel(const int n, float4 *data_in, float4* data_out) {
-  int index = threadIdx.x + numElem*blockIdx.x*blockDim.x;
-  float4 a[numElem];
-  for (int i=0;i < numElem;i++) {
-    if (index + i*blockDim.x < n) a[i] = data_in[index + i*blockDim.x];
-  }
-  for (int i=0;i < numElem;i++) {
-    if (index + i*blockDim.x < n) data_out[index + i*blockDim.x] = a[i];
-  }
-}
-
-#define NUM_ELEM 2
-void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream) {
-
-  int numthread = 256;
-  int numblock = (n/(4*NUM_ELEM) - 1)/numthread + 1;
-  // numblock = min(65535, numblock);
-  int shmemsize = 0;
-
-  memcpyFloatKernel<NUM_ELEM> <<< numblock, numthread, shmemsize, stream >>>
-  (n/4, (float4 *)data_in, (float4 *)data_out);
-
-  cudaCheck(cudaGetLastError());
-}
-// -----------------------------------------------------------------------------------
