@@ -57,15 +57,15 @@ Options:
 Performance
 ===========
 
-cuTT was designed with performance as the main goal. Here are performance benchmarks for a random set of tensors with 200M `double` elements with ranks 2 to 8 and 15.
+cuTT was designed with performance as the main goal. Here are performance benchmarks for a random set of tensors with 200M `double` elements with ranks 2 to 8 and 15. The benchmarks were run with the measurement flag on
+(cutt_bench -measure)
 
-Benchmarks on Titan, which has Tesla K20X with ECC on. For this setup, bandwidth for a simple copy is about 176 GB/s.
+![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k20x.png)
 
-![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k20x_june29_2016.png)
+<!-- ![k40m](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k40m_july1_2016.png)
+ -->
 
-![k40m](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k40m_july1_2016.png)
-
-![titanx](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_titanx_july1_2016.png)
+![titanx](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_titanx.png)
 
 
 Usage
@@ -120,7 +120,8 @@ int main() {
 
 Input (idata) and output (odata) data are both in GPU memory and must point to different
 memory areas for correct operation. That is, cuTT only currently supports out-of-place
-transposes.
+transposes. Note that using Option 2 to create the plan can take up some time especially
+for high-rank tensors.
 
 cuTT API
 ========
@@ -196,10 +197,10 @@ cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream);
 cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata);
 ```
 
-TODO
-====
- * Fix TiledSingleRank and TiledLeadVolSame for the case where numblock > 65535
- * Test TiledLeadVolSame when Mm and Mk have multiple ranks
+KNOWN BUGS
+==========
+ * Benchmarks sometime fail because the stupid algorithm I have now to create
+ random tensors of fixed volume.
 
 Licence
 =======
