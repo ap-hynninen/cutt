@@ -32,6 +32,18 @@ SOFTWARE.
 #include <set>
 
 //
+// Simple raw timer
+//
+class Timer {
+private:
+  struct timespec tmstart, tmend;
+public:
+  void start();
+  void stop();
+  double seconds();
+};
+
+//
 // Records timings for cuTT and gives out bandwidths and other data
 //
 class cuttTimer {
@@ -47,7 +59,7 @@ private:
   size_t curBytes;
 
   // Timer for current run
-  struct timespec tmstart, tmend;
+  Timer timer;
 
   struct Stat {
     int numSample;

@@ -53,6 +53,7 @@ TensorTester* tester = NULL;
 
 cuttTimer timerFloat(4);
 cuttTimer timerDouble(8);
+bool use_cuttPlanMeasure;
 
 bool bench1(int numElem);
 bool bench2(int numElem);
@@ -68,11 +69,20 @@ int main(int argc, char *argv[]) {
 
   int gpuid = -1;
   bool arg_ok = true;
+  use_cuttPlanMeasure = false;
   if (argc >= 3) {
-    if (strcmp(argv[1], "-device") == 0) {
-      sscanf(argv[2], "%d", &gpuid);
-    } else {
-      arg_ok = false;
+    int i = 1;
+    while (i < argc) {
+      if (strcmp(argv[i], "-device") == 0) {
+        sscanf(argv[i+1], "%d", &gpuid);
+        i += 2;
+      } else if (strcmp(argv[i], "-measure") == 0) {
+        use_cuttPlanMeasure = true;
+        i++;
+      } else {
+        arg_ok = false;
+        break;
+      }
     }
   } else if (argc > 1) {
     arg_ok = false;
@@ -82,6 +92,7 @@ int main(int argc, char *argv[]) {
     printf("cutt_bench [options]\n");
     printf("Options:\n");
     printf("-device gpuid : use GPU with ID gpuid\n");
+    printf("-measure      : use cuttPlanMeasure (default is cuttPlan)\n");
     return 1;
   }
 
@@ -120,12 +131,12 @@ int main(int argc, char *argv[]) {
 
   if (bench3(200*MILLION)) {
     printf("bench3:\n");
-    printf("rank <BW>  worst  best\n");
+    printf("rank best worst average\n");
     for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
       double worstBW = timerDouble.getWorst(*it);
       double bestBW = timerDouble.getBest(*it);
       double aveBW = timerDouble.getAverage(*it);
-      printf("%2d %6.2lf %6.2lf %6.2lf\n", *it, aveBW, worstBW, bestBW);
+      printf("%d %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW);
     }
     double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
     printf("worst of all %4.2lf rank %d\n", worstBW, worstDim.size());
@@ -232,7 +243,7 @@ bool bench3(int numElem) {
     std::vector<int> dim(ranks[i]);
     std::vector<int> permutation(ranks[i]);
     for (int r=0;r < ranks[i];r++) permutation[r] = r;
-    for (int nsample=0;nsample < 10;nsample++) {
+    for (int nsample=0;nsample < 50;nsample++) {
       std::random_shuffle(permutation.begin(), permutation.end());
       getRandomDim((double)numElem, dim);
       if (!bench_tensor<long long int>(dim, permutation)) return false;
@@ -530,17 +541,63 @@ bool bench4() {
     printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
-// rank 15 bandwidth 27.19
-// dimensions
-// 4 4 4 3 3 2 4 4 4 3 4 3 4 4 4 
-// permutation
-// 6-7-9-13-5-4-11-10-14-3-1-15-2-8-12 
+  {
+    // rank 15 bandwidth 27.19
+    // dimensions
+    // 4 4 4 3 3 2 4 4 4 3 4 3 4 4 4 
+    // permutation
+    // 6-7-9-13-5-4-11-10-14-3-1-15-2-8-12 
+    std::vector<int> dim(15);
+    dim[0] = 4;
+    dim[1] = 4;
+    dim[2] = 4;
+    dim[3] = 3;
+    dim[4] = 3;
+    dim[5] = 2;
+    dim[6] = 4;
+    dim[7] = 4;
+    dim[8] = 4;
+    dim[9] = 3;
+    dim[10] = 4;
+    dim[11] = 3;
+    dim[12] = 4;
+    dim[13] = 4;
+    dim[14] = 4;
+    std::vector<int> permutation(15);
+    permutation[0] = 6 - 1;
+    permutation[1] = 7 - 1;
+    permutation[2] = 9 - 1;
+    permutation[3] = 13 - 1;
+    permutation[4] = 5 - 1;
+    permutation[5] = 4 - 1;
+    permutation[6] = 11 - 1;
+    permutation[7] = 10 - 1;
+    permutation[8] = 14 - 1;
+    permutation[9] = 3 - 1;
+    permutation[10] = 1 - 1;
+    permutation[11] = 15 - 1;
+    permutation[12] = 2 - 1;
+    permutation[13] = 8 - 1;
+    permutation[14] = 12 - 1;
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
 
 // worst of all 59.62 rank 6
 // dimensions
 // 21 30 44 25 19 13 
 // permutation
 // 5 3 4 2 1 0 
+
+// worst of all 65.52 rank 15
+// dimensions
+// 3 3 4 4 4 4 3 3 4 3 4 4 4 3 4 
+// permutation
+// 14 11 13 4 12 0 7 3 1 9 2 8 10 5 6 
 
   return true;
 }
@@ -601,7 +658,11 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
   printVec(permutation);
 
   cuttHandle plan;
-  cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
+  if (use_cuttPlanMeasure) {
+    cuttCheck(cuttPlanMeasure(&plan, rank, dim.data(), permutation.data(), sizeof(T), dataIn, dataOut));
+  } else {
+    cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
+  }
 
   cuttTimer* timer;
   if (sizeof(T) == 4) {

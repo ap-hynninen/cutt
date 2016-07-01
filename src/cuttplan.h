@@ -33,10 +33,13 @@ SOFTWARE.
 const int TILEDIM = 32;
 const int TILEROWS = 8;
 
-// Tells how tensor is split into Mm and Mk
+// Tells how tensor is split into Mm and Mk and what method is used
 // NOTE: sizeMm and sizeMk fully define the split
 class TensorSplit {
 public:
+  // Transposing method
+  int method;
+
   // Input volume
   int sizeMm;
   int volMm;
@@ -57,53 +60,15 @@ public:
   int sizeMbar;
   int volMbar;
 
-  void print() {
-    printf("sizeMm %d sizeMk %d sizeMmk %d sizeMbar %d sizeMkBar %d\n",
-      sizeMm, sizeMk, sizeMmk, sizeMbar, sizeMkBar);
-    printf("volMm %d volMk %d volMmk %d volMbar %d volMkBar %d\n",
-      volMm, volMk, volMmk, volMbar, volMkBar);
-  }
+  // Number of active thread blocks, for General method
+  int numActiveBlock;
+
+  TensorSplit();
+
+  void print();
 
   void update(const int sizeMm_in, const int sizeMk_in, const int rank,
-    const int* dim, const int* permutation) {
-
-    sizeMm = sizeMm_in;
-    sizeMk = sizeMk_in;
-
-    // First sizeMm are in Mm
-    volMm = 1;
-    for (int i=0;i < sizeMm;i++) {
-      volMm *= dim[i];
-    }
-    // First sizeMk in permuted order are in Mk
-    volMk = 1;
-    for (int i=0;i < sizeMk;i++) {
-      volMk *= dim[permutation[i]];
-    }
-
-    int vol = 1;
-    volMmk = 1;
-    sizeMmk = 0;
-    volMkBar = 1;
-    sizeMkBar = 0;
-    for (int i=0;i < rank;i++) {
-      int pi = permutation[i];
-      if (i < sizeMm) {
-        volMmk *= dim[i];
-        sizeMmk++;
-      }
-      if (i < sizeMk && pi >= sizeMm) {
-        volMmk *= dim[pi];
-        sizeMmk++;
-        volMkBar *= dim[pi];
-        sizeMkBar++;
-      }
-      vol *= dim[i];
-    }
-
-    sizeMbar = rank - sizeMmk;
-    volMbar = vol/volMmk;
-  }
+    const int* dim, const int* permutation);
 };
 
 class LaunchConfig {
@@ -140,9 +105,8 @@ public:
   int cuDimMk;
   int cuDimMm;
 
-  // Transposing method
+  // Transposing methods
   enum {Unknown, General, TiledSingleRank, TiledLeadVolSame};
-  int method;
 
   int2 tiledVol;
 
@@ -158,11 +122,17 @@ public:
   cuttPlan_t();
   ~cuttPlan_t();
   void setStream(cudaStream_t stream_in);
-  bool setup(const int rank_in, const int* dim, const int* permutation, const size_t sizeofType_in);
+  bool setup(const int rank_in, const int* dim, const int* permutation,
+    const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in);
+  // bool execute(void* idata, void* odata);
 private:
-  void setupTiledSingleRank(const int* dim, const int* permutation, TensorSplit& ts);
-  void setupTiledLeadVolSame(const int* dim, const int* permutation, TensorSplit& ts);
-  void setupGeneral(const int* dim, const int* permutation, cudaDeviceProp& prop, TensorSplit& ts);
+  // void setupTiledSingleRank(const int* dim, const int* permutation, TensorSplit& ts);
+  // void setupTiledLeadVolSame(const int* dim, const int* permutation, TensorSplit& ts);
+  // void setupGeneral(const int* dim, const int* permutation, cudaDeviceProp& prop, TensorSplit& ts);
 };
+
+void getTensorSplits(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
+  cudaDeviceProp& prop, std::vector<TensorSplit>& tensorSplits);
+int chooseTensorSplitHeuristic(std::vector<TensorSplit>& tensorSplits);
 
 #endif // CUTTPLAN_H

@@ -26,6 +26,21 @@ SOFTWARE.
 #include "cuttTimer.h"
 #include <sstream>
 
+void Timer::start() {
+  clock_gettime(CLOCK_REALTIME, &tmstart);
+}
+
+void Timer::stop() {
+  clock_gettime(CLOCK_REALTIME, &tmend);
+}
+
+//
+// Returns the duration of the last run in seconds
+//
+double Timer::seconds() {
+  return (double)((tmend.tv_sec+tmend.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+}
+
 //
 // Class constructor
 //
@@ -62,14 +77,14 @@ void cuttTimer::start(std::vector<int>& dim, std::vector<int>& permutation) {
     curBytes *= dim[i];
   }
   ranks.insert(curDim.size());
-  clock_gettime(CLOCK_REALTIME, &tmstart);
+  timer.start();
 }
 
 //
 // Stop timer and record statistics
 //
 void cuttTimer::stop() {
-  clock_gettime(CLOCK_REALTIME, &tmend);
+  timer.stop();
   double bandwidth = GBs();
   auto it = stats.find(curDim.size());
   if (it == stats.end()) {
@@ -93,7 +108,7 @@ void cuttTimer::stop() {
 // Returns the duration of the last run in seconds
 //
 double cuttTimer::seconds() {
-  return (double)((tmend.tv_sec+tmend.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
+  return timer.seconds();
 }
 
 //

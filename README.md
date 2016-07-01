@@ -35,6 +35,25 @@ as well as the test and benchmarks
 
 In order to use cuTT, you only need the include (include/cutt.h) and the library (lib/libcutt.a) files.
 
+Running tests and benchmarks
+============================
+
+Tests and benchmark executables are in the bin/ directory and they can be run without any options.
+Options to the test executable lets you choose the device ID on which to run:
+
+cutt_test [options]
+Options:
+-device gpuid : use GPU with ID gpuid
+
+For the benchmark executable, we have an additional option that lets you run the benchmarks using
+plans that are chosen optimally by measuring the performance of every possible implementation and
+choosing the best one.
+
+cutt_bench [options]
+Options:
+-device gpuid : use GPU with ID gpuid
+-measure      : use cuttPlanMeasure (default is cuttPlan)
+
 Performance
 ===========
 
@@ -43,6 +62,10 @@ cuTT was designed with performance as the main goal. Here are performance benchm
 Benchmarks on Titan, which has Tesla K20X with ECC on. For this setup, bandwidth for a simple copy is about 176 GB/s.
 
 ![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k20x_june29_2016.png)
+
+![k40m](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k40m_july1_2016.png)
+
+![titanx](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_titanx_july1_2016.png)
 
 
 Usage
@@ -76,9 +99,12 @@ int main() {
   // double* idata : size product(dim)
   // double* odata : size product(dim)
 
-  // Create plan
+  // Option 1: Create plan and choose implementation based on heuristics
   cuttHandle plan;
-  cuttCheck(cuttPlan(&plan, 4, dim, permutation, 8));
+  cuttCheck(cuttPlan(&plan, 4, dim, permutation, sizeof(double)));
+
+  // Option 2: Create plan and choose implementation based on performance measurements
+  // cuttCheck(cuttPlanMeasure(&plan, 4, dim, permutation, sizeof(double), idata, odata));
 
   // Execute plan
   cuttCheck(cuttExecute(plan, idata, odata));
@@ -114,6 +140,24 @@ cuTT API
 // Success/unsuccess code
 // 
 cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType);
+
+//
+// Create plan and choose implementation by measuring performance
+//
+// Parameters
+// handle            = Returned handle to cuTT plan
+// rank              = Rank of the tensor
+// dim[rank]         = Dimensions of the tensor
+// permutation[rank] = Transpose permutation
+// sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// idata             = Input data size product(dim)
+// odata             = Output data size product(dim)
+//
+// Returns
+// Success/unsuccess code
+// 
+cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  void* idata, void* odata);
 
 //
 // Destroy plan

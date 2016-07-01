@@ -518,10 +518,10 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
 // lc.shmemsize
 // lc.numRegStorage  (for General method)
 //
-int cuttKernelLaunchConfiguration(int method, int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
+int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
   LaunchConfig& lc) {
 
-  switch(method) {
+  switch(ts.method) {
     case cuttPlan_t::General:
     {
       // Amount of shared memory required
@@ -633,7 +633,7 @@ int cuttKernelLaunchConfiguration(int method, int sizeofType, TensorSplit& ts, c
     lc.numblock.z > prop.maxGridSize[2]) return 0;
 
   // Return the number of active blocks with these settings
-  return getNumActiveBlock(method, sizeofType, lc);
+  return getNumActiveBlock(ts.method, sizeofType, lc);
 }
 
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
@@ -648,7 +648,7 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     lc.shmemsize, lc.numRegStorage);
 #endif
 
-  switch(plan.method) {
+  switch(ts.method) {
     case cuttPlan_t::General:
     {
       switch(lc.numRegStorage) {

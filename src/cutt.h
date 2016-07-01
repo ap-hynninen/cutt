@@ -56,6 +56,24 @@ typedef enum cuttResult_t {
 cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType);
 
 //
+// Create plan and choose implementation by measuring performance
+//
+// Parameters
+// handle            = Returned handle to cuTT plan
+// rank              = Rank of the tensor
+// dim[rank]         = Dimensions of the tensor
+// permutation[rank] = Transpose permutation
+// sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// idata             = Input data size product(dim)
+// odata             = Output data size product(dim)
+//
+// Returns
+// Success/unsuccess code
+// 
+cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  void* idata, void* odata);
+
+//
 // Destroy plan
 //
 // Parameters

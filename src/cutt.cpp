@@ -28,6 +28,7 @@ SOFTWARE.
 #include "CudaUtils.h"
 #include "cuttplan.h"
 #include "cuttkernel.h"
+#include "cuttTimer.h"
 #include "cutt.h"
 
 
@@ -40,7 +41,7 @@ static cuttHandle curHandle = 0;
 // Table of devices that have been initialized
 static std::unordered_set<int> devicesReady;
 
-cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType) {
+cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeofType) {
   // Check sizeofType
   if (sizeofType != 4 && sizeofType != 8) return CUTT_INVALID_PARAMETER;
   // Check rank
@@ -60,7 +61,16 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
     }
   }
   delete [] check;
-  if (permutation_fail) return CUTT_INVALID_PARAMETER;
+  if (permutation_fail) return CUTT_INVALID_PARAMETER;  
+
+  return CUTT_SUCCESS;
+}
+
+cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType) {
+
+  // Check that input parameters are valid
+  cuttResult inpCheck = cuttPlanCheckInput(rank, dim, permutation, sizeofType);
+  if (inpCheck != CUTT_SUCCESS) return inpCheck;
 
   // Create new handle
   *handle = curHandle;
@@ -69,12 +79,87 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   // Check that the current handle is available (it better be!)
   if (plans.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
+  // Get all possible ways tensor can be transposed
+  int deviceID;
+  cudaCheck(cudaGetDevice(&deviceID));
+  cudaDeviceProp prop;
+  cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+  std::vector<TensorSplit> tensorSplits;
+  getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
+
+  // Choose the way
+  int index = chooseTensorSplitHeuristic(tensorSplits);
+  if (index == -1) return CUTT_INTERNAL_ERROR;
+
   // Create new plan
   cuttPlan_t* plan = new cuttPlan_t();
-  if (!plan->setup(rank, dim, permutation, sizeofType)) return CUTT_INTERNAL_ERROR;
+  if (!plan->setup(rank, dim, permutation, sizeofType, prop, tensorSplits[index])) return CUTT_INTERNAL_ERROR;
 
   // Insert plan into storage
   plans.insert( {*handle, plan} );
+
+  return CUTT_SUCCESS;
+}
+
+cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  void* idata, void* odata) {
+
+  // Check that input parameters are valid
+  cuttResult inpCheck = cuttPlanCheckInput(rank, dim, permutation, sizeofType);
+  if (inpCheck != CUTT_SUCCESS) return inpCheck;
+
+  if (idata == odata) return CUTT_INVALID_PARAMETER;
+
+  // Create new handle
+  *handle = curHandle;
+  curHandle++;
+
+  // Check that the current handle is available (it better be!)
+  if (plans.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
+
+  // Get all possible ways tensor can be transposed
+  int deviceID;
+  cudaCheck(cudaGetDevice(&deviceID));
+  cudaDeviceProp prop;
+  cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+  std::vector<TensorSplit> tensorSplits;
+  getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
+
+  // Set shared memory configuration if necessary
+  if (!devicesReady.count(deviceID)) {
+    cuttKernelSetSharedMemConfig();
+    devicesReady.insert(deviceID);
+  }
+
+  // Choose the plan
+  double bestTime = 1.0e40;
+  cuttPlan_t* bestPlan = NULL;
+  Timer timer;
+  for (int i=0;i < tensorSplits.size();i++) {
+    // Create new plan    
+    cuttPlan_t* plan = new cuttPlan_t();
+    if (!plan->setup(rank, dim, permutation, sizeofType, prop, tensorSplits[i])) {
+      return CUTT_INTERNAL_ERROR;
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    timer.start();
+    // Execute plan
+    if (!cuttKernel(*plan, idata, odata)) return CUTT_INTERNAL_ERROR;
+    cudaCheck(cudaDeviceSynchronize());
+    timer.stop();
+    double curTime = timer.seconds();
+    if (curTime < bestTime) {
+      bestTime = curTime;
+      bestPlan = plan;
+    } else {
+      delete plan;
+    }
+  }
+
+  if (bestPlan == NULL) return CUTT_INTERNAL_ERROR;
+
+  // Insert plan into storage
+  plans.insert( {*handle, bestPlan} );
 
   return CUTT_SUCCESS;
 }
