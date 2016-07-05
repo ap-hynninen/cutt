@@ -149,6 +149,7 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     timer.stop();
     double curTime = timer.seconds();
     if (curTime < bestTime) {
+      if (bestPlan != NULL) delete bestPlan;
       bestTime = curTime;
       bestPlan = plan;
     } else {
