@@ -68,9 +68,10 @@ void printVec(std::vector<int>& vec);
 int main(int argc, char *argv[]) {
 
   int gpuid = -1;
+  unsigned seed = unsigned (std::time(0));
   bool arg_ok = true;
   use_cuttPlanMeasure = false;
-  if (argc >= 3) {
+  if (argc >= 2) {
     int i = 1;
     while (i < argc) {
       if (strcmp(argv[i], "-device") == 0) {
@@ -79,6 +80,9 @@ int main(int argc, char *argv[]) {
       } else if (strcmp(argv[i], "-measure") == 0) {
         use_cuttPlanMeasure = true;
         i++;
+      } else if (strcmp(argv[i], "-seed") == 0) {
+        sscanf(argv[i+1], "%u", &seed);
+        i += 2;
       } else {
         arg_ok = false;
         break;
@@ -91,8 +95,9 @@ int main(int argc, char *argv[]) {
   if (!arg_ok) {
     printf("cutt_bench [options]\n");
     printf("Options:\n");
-    printf("-device gpuid : use GPU with ID gpuid\n");
+    printf("-device gpuid : use GPU with ID gpuid (default is 0)\n");
     printf("-measure      : use cuttPlanMeasure (default is cuttPlan)\n");
+    printf("-seed seed    : seed value for random number generator (default is system timer)\n");
     return 1;
   }
 
@@ -114,7 +119,6 @@ int main(int argc, char *argv[]) {
   std::vector<int> worstDim;
   std::vector<int> worstPermutation;
 
-  unsigned seed = unsigned (std::time(0));
   std::srand(seed);
 
   // if (!bench1(40*MILLION, bandwidths)) goto fail;
@@ -129,6 +133,7 @@ int main(int argc, char *argv[]) {
   //   printf("%lf\n", bandwidths[i]);
   // }
 
+#if 1
   if (bench3(200*MILLION)) {
     printf("bench3:\n");
     printf("rank best worst average\n");
@@ -138,19 +143,30 @@ int main(int argc, char *argv[]) {
       double aveBW = timerDouble.getAverage(*it);
       printf("%d %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW);
     }
-    double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
-    printf("worst of all %4.2lf rank %d\n", worstBW, worstDim.size());
-    printf("dimensions\n");
-    printVec(worstDim);
-    printf("permutation\n");
-    printVec(worstPermutation);
+    for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      std::vector<int> dim;
+      std::vector<int> permutation;
+      double worstBW = timerDouble.getWorst(*it, dim, permutation);
+      printf("rank %d BW %4.2lf\n", *it, worstBW);
+      printf("dimensions\n");
+      printVec(dim);
+      printf("permutation\n");
+      printVec(permutation);
+    }
+    // double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
+    // printf("worst of all %4.2lf rank %d\n", worstBW, worstDim.size());
+    // printf("dimensions\n");
+    // printVec(worstDim);
+    // printf("permutation\n");
+    // printVec(worstPermutation);
   } else {
     goto fail;
   }
+#else
+  if (!bench4()) goto fail;
+#endif
 
-  // if (!bench4()) goto fail;
-
-  if (!bench_memcpy(200*MILLION)) goto fail;
+  // if (!bench_memcpy(200*MILLION)) goto fail;
 
   printf("bench OK\n");
 
@@ -257,6 +273,7 @@ bool bench3(int numElem) {
 // Benchmark 4: specific examples
 //
 bool bench4() {
+/*
   {
     // rank 7 bandwidth 38.99
     // dimensions
@@ -587,17 +604,106 @@ bool bench4() {
     printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
 
-// worst of all 59.62 rank 6
-// dimensions
-// 21 30 44 25 19 13 
-// permutation
-// 5 3 4 2 1 0 
+  {
+    // rank 6 BW 45.65
+    // dimensions
+    // 69 11 5 29 25 62 
+    // permutation
+    // 2 4 3 0 5 1 
+    std::vector<int> dim = {69, 11, 5, 29, 25, 62};
+    // std::vector<int> dim = {69, 11, 25, 29, 5, 62};
+    std::vector<int> permutation = {4, 2, 3, 0, 5, 1};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    // if (!bench_tensor<int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+    printf("bandwidth %4.2lf GB/s\n", timerFloat.GBs());
+  }
 
-// worst of all 65.52 rank 15
-// dimensions
-// 3 3 4 4 4 4 3 3 4 3 4 4 4 3 4 
-// permutation
-// 14 11 13 4 12 0 7 3 1 9 2 8 10 5 6 
+  {
+    // rank 6 BW 37.21
+    // dimensions
+    // 46 32 54 10 3 68 
+    // permutation
+    // 4 5 0 1 2 3 
+    std::vector<int> dim = {46, 32, 54, 10, 3, 68};
+    std::vector<int> permutation = {4, 5, 0, 1, 2, 3};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
+
+  {
+    // rank 6 BW 71.13
+    // dimensions
+    // 5 53 20 20 37 40 
+    // permutation
+    // 5 1 3 4 0 2 
+    // std::vector<int> dim = {5, 53, 20, 20, 37, 40};
+    std::vector<int> dim = {5, 36, 20, 20, 37, 40};
+    // std::vector<int> permutation = {5, 1, 3, 4, 0, 2};
+    std::vector<int> permutation = {5, 0, 3, 4, 1, 2};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
+
+  {
+    // rank 6 BW 72.50
+    // dimensions
+    // 24 32 16 36 43 9 
+    // permutation
+    // 5 1 4 2 3 0 
+    std::vector<int> dim = {24, 32, 16, 36, 43, 9};
+    std::vector<int> permutation = {5, 1, 4, 2, 3, 0};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
+
+  {
+    // dimensions
+    // 4 3 4 4 3 4 4 4 3 3 3 3 3 4 4 
+    // permutation
+    // 8 6 10 14 1 7 3 11 13 0 4 12 2 9 5 
+    std::vector<int> dim = {4, 3, 4, 4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 4, 4};
+    std::vector<int> permutation = {8, 6, 10, 14, 1, 7, 3, 11, 13, 0, 4, 12, 2, 9, 5};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
+*/
+
+  {
+    // rank 5 BW 49.30
+    // dimensions
+    // 6 72 51 81 102 
+    // permutation
+    // 0 4 3 2 1 
+    std::vector<int> dim = {6, 72, 51, 81, 102};
+    std::vector<int> permutation = {0, 4, 3, 2, 1};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
 
   return true;
 }

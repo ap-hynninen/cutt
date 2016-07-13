@@ -26,6 +26,13 @@ SOFTWARE.
 #include "cuttTimer.h"
 #include <sstream>
 
+Timer::Timer() {
+  tmend.tv_sec = 0;
+  tmend.tv_nsec = 0;
+  tmstart.tv_sec = 0;
+  tmstart.tv_nsec = 0;
+}
+
 void Timer::start() {
   clock_gettime(CLOCK_REALTIME, &tmstart);
 }
@@ -116,7 +123,8 @@ double cuttTimer::seconds() {
 //
 double cuttTimer::GBs() {
   const double BILLION = 1000000000.0;
-  return (double)(curBytes)/(BILLION*seconds());
+  double sec = seconds();
+  return (sec == 0.0) ? 0.0 : (double)(curBytes)/(BILLION*sec);
 }
 
 //

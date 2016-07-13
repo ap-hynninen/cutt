@@ -25,7 +25,7 @@ SOFTWARE.
 #ifndef CUTTTYPES_H
 #define CUTTTYPES_H
 
-const int MAX_REG_STORAGE = 8;
+#define MAX_REG_STORAGE 8
 
 struct TensorConv {
   int c;

@@ -23,6 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *******************************************************************************/
 #include <cuda.h>
+#include <list>
 #include <unordered_map>
 #include <unordered_set>
 #include "CudaUtils.h"
@@ -84,16 +85,16 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
-  std::vector<TensorSplit> tensorSplits;
+  std::list<TensorSplit> tensorSplits;
   getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
 
   // Choose the way
-  int index = chooseTensorSplitHeuristic(tensorSplits);
-  if (index == -1) return CUTT_INTERNAL_ERROR;
+  std::list<TensorSplit>::iterator it = chooseTensorSplitHeuristic(tensorSplits);
+  if (it == tensorSplits.end()) return CUTT_INTERNAL_ERROR;
 
   // Create new plan
   cuttPlan_t* plan = new cuttPlan_t();
-  if (!plan->setup(rank, dim, permutation, sizeofType, prop, tensorSplits[index])) return CUTT_INTERNAL_ERROR;
+  if (!plan->setup(rank, dim, permutation, sizeofType, prop, *it)) return CUTT_INTERNAL_ERROR;
 
   // Insert plan into storage
   plans.insert( {*handle, plan} );
@@ -122,8 +123,10 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
-  std::vector<TensorSplit> tensorSplits;
+  std::list<TensorSplit> tensorSplits;
   getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
+  
+  reduceTensorSplits(tensorSplits);
 
   // Set shared memory configuration if necessary
   if (!devicesReady.count(deviceID)) {
@@ -131,14 +134,23 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     devicesReady.insert(deviceID);
   }
 
+#if 0
+  std::list<TensorSplit> smallTensorSplits;
+  int smallRank;
+  std::vector<int> smallDim;
+  std::vector<int> smallPermutation;
+  reduceMbar(rank, dim, permutation, tensorSplits,
+    smallRank, smallDim, smallPermutation, smallTensorSplits);
+
   // Choose the plan
   double bestTime = 1.0e40;
-  cuttPlan_t* bestPlan = NULL;
+  auto bestIt = tensorSplits.end();
+  auto it = tensorSplits.begin();
   Timer timer;
-  for (int i=0;i < tensorSplits.size();i++) {
-    // Create new plan    
+  for (auto smallIt=smallTensorSplits.begin();smallIt != smallTensorSplits.end();smallIt++,it++) {
+    // Create new small plan
     cuttPlan_t* plan = new cuttPlan_t();
-    if (!plan->setup(rank, dim, permutation, sizeofType, prop, tensorSplits[i])) {
+    if (!plan->setup(smallRank, smallDim.data(), smallPermutation.data(), sizeofType, prop, *smallIt)) {
       return CUTT_INTERNAL_ERROR;
     }
     cudaCheck(cudaDeviceSynchronize());
@@ -148,6 +160,42 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     cudaCheck(cudaDeviceSynchronize());
     timer.stop();
     double curTime = timer.seconds();
+    plan->print();
+    printf("curTime %4.2lf\n", curTime*1000.0);
+    if (curTime < bestTime) {
+      bestTime = curTime;
+      bestIt = it;
+    }
+    delete plan;
+  }
+  if (bestIt == tensorSplits.end()) return CUTT_INTERNAL_ERROR;
+
+  // Create the actual plan
+  cuttPlan_t* bestPlan = new cuttPlan_t();
+  if (!bestPlan->setup(rank, dim, permutation, sizeofType, prop, *bestIt)) {
+    return CUTT_INTERNAL_ERROR;
+  }
+
+#else
+  // Choose the plan
+  double bestTime = 1.0e40;
+  cuttPlan_t* bestPlan = NULL;
+  Timer timer;
+  for (auto it=tensorSplits.begin();it != tensorSplits.end();it++) {
+    // Create new plan    
+    cuttPlan_t* plan = new cuttPlan_t();
+    if (!plan->setup(rank, dim, permutation, sizeofType, prop, *it)) {
+      return CUTT_INTERNAL_ERROR;
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    timer.start();
+    // Execute plan
+    if (!cuttKernel(*plan, idata, odata)) return CUTT_INTERNAL_ERROR;
+    cudaCheck(cudaDeviceSynchronize());
+    timer.stop();
+    double curTime = timer.seconds();
+    // plan->print();
+    // printf("curTime %4.2lf\n", curTime*1000.0);
     if (curTime < bestTime) {
       if (bestPlan != NULL) delete bestPlan;
       bestTime = curTime;
@@ -156,8 +204,10 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
       delete plan;
     }
   }
-
   if (bestPlan == NULL) return CUTT_INTERNAL_ERROR;
+#endif
+
+  // bestPlan->print();
 
   // Insert plan into storage
   plans.insert( {*handle, bestPlan} );

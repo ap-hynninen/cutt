@@ -45,89 +45,6 @@ int tensorPos(
 
 }
 
-//__constant__ int args[2];
-
-#if 0
-//
-// Transpose when Mm and Mk don't overlap and contain only single rank
-//
-//  dim3 numthread(TILEDIM, TILEROWS, 1);
-//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
-//
-template <typename T>
-__global__ void transposeTiledSingleRank(
-  const int volMbar, const int sizeMbar,
-  const int2 readVol, const int cuDimMk, const int cuDimMm,
-  const TensorConvInOut* __restrict__ glMbar,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
-
-  // Shared memory
-  __shared__ T shTile[TILEDIM][TILEDIM+1];
-
-  const int warpLane = threadIdx.x & (warpSize - 1);
-  TensorConvInOut Mbar;
-  Mbar.c_in = 1;
-  Mbar.d_in = 1;
-  Mbar.c_out = 1;
-  Mbar.d_out = 1;
-  if (warpLane < sizeMbar) {
-    Mbar = glMbar[warpLane];
-  }
-
-  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
-  {
-
-    // Compute global memory positions
-    int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
-    int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
-#pragma unroll
-    for (int i=16;i >= 1;i/=2) {
-      posMajorIn += __shfl_xor(posMajorIn, i);
-      posMajorOut += __shfl_xor(posMajorOut, i);
-    }
-
-    for (int x0 = blockIdx.x * TILEDIM;x0 < readVol.x;x0 += blockDim.x*gridDim.x) {
-      for (int y0 = blockIdx.y * TILEDIM;y0 < readVol.y;y0 += blockDim.y*gridDim.y) {
-
-        int xin = x0 + threadIdx.x;
-        int yin = y0 + threadIdx.y;
-
-        int xout = x0 + threadIdx.y;
-        int yout = y0 + threadIdx.x;
-
-        int posIn = posMajorIn + xin + yin*cuDimMk;
-        int posOut = posMajorOut + yout + xout*cuDimMm;
-
-        // Read from global memory
-        __syncthreads();
-
-        // Read data into shared memory tile
-    #pragma unroll
-        for (int j=0;j < TILEDIM;j += TILEROWS) {
-          int pos = posIn + j*cuDimMk;
-          if (xin < readVol.x && yin + j < readVol.y) {
-            shTile[threadIdx.y + j][threadIdx.x] = dataIn[pos];
-          }
-        }
-
-        // Write to global memory
-        __syncthreads();
-
-    #pragma unroll
-        for (int j=0;j < TILEDIM;j += TILEROWS) {
-          int pos = posOut + j*cuDimMm;
-          if (xout + j < readVol.x && yout < readVol.y) {
-            dataOut[pos] = shTile[threadIdx.x][threadIdx.y + j];
-          }
-        }
-      }
-    }
-  }
-  
-}
-#endif
-
-#if 1
 //
 // Transpose when Mm and Mk don't overlap and contain only single rank
 //
@@ -212,14 +129,205 @@ __global__ void transposeTiledSingleRank(
   }
   
 }
-#endif
+
+//
+// Transpose when Mm and Mk don't overlap, and Mm has single rank
+//
+template <typename T>
+__global__ void transposeTiledSingleInRank(
+  const int volMm, const int volMk, const int volMbar,
+  const int sizeMk, const int sizeMbar,
+  const int cMm,
+  const TensorConvInOut* __restrict__ glMbar,
+  const TensorConv* __restrict__ glMk,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  // Shared memory. (TILEDIM + 1)*volMk elements
+  extern __shared__ char shBuffer_char[];
+  T* shBuffer = (T *)shBuffer_char;
+
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (threadIdx.x < sizeMbar) {
+    Mbar = glMbar[threadIdx.x];
+  }
+
+  TensorConv Mk;
+  Mk.c = 1;
+  Mk.d = 1;
+  if (threadIdx.x < sizeMk) {
+    Mk = glMk[threadIdx.x];
+  }
+
+  // Single register stores all minor positions per warp
+  int posMinorIn = 0;
+  {
+    int j = threadIdx.x*blockDim.y + threadIdx.y;
+    for (int i=0;i < sizeMk;i++) {
+      posMinorIn += ((j / __shfl(Mk.c,i)) % __shfl(Mk.d,i) ) * __shfl(Mk.ct,i);
+    }
+  }
+
+  const int xi = threadIdx.x + blockIdx.x*TILEDIM;
+
+  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
+  {
+
+    // Compute global memory positions
+    int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+    int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMajorIn += __shfl_xor(posMajorIn, i);
+      posMajorOut += __shfl_xor(posMajorOut, i);
+    }
+    posMajorIn += xi;
+
+    // Read from global memory
+    __syncthreads();
+
+    int jj = 0;
+    for (int j=threadIdx.y;j < volMk;) {
+      int posIn1 = posMajorIn + __shfl(posMinorIn, jj);
+      if (xi < volMm) {
+        int posShj = threadIdx.x + j*(TILEDIM+1);
+        shBuffer[posShj] = dataIn[posIn1];
+      }
+      jj++;
+      j += blockDim.y;
+      int posIn2 = posMajorIn + __shfl(posMinorIn, jj);
+      if (j < volMk && xi < volMm) {
+        int posShj = threadIdx.x + j*(TILEDIM+1);
+        shBuffer[posShj] = dataIn[posIn2];
+      }
+      jj++;
+      j += blockDim.y;
+    }
+
+    // Write to global memory
+    __syncthreads();
+
+    for (int k=threadIdx.y;k < TILEDIM;k += blockDim.y) {
+      int i = k + blockIdx.x*blockDim.y;
+      if (i < volMm) {
+        int posOut = posMajorOut + i*cMm + threadIdx.x;
+        for (int j=threadIdx.x;j < volMk;) {
+          dataOut[posOut] = shBuffer[j*(TILEDIM + 1) + k];
+          j += TILEDIM;
+          posOut += TILEDIM;
+          if (j < volMk) {
+            dataOut[posOut] = shBuffer[j*(TILEDIM + 1) + k];
+          }
+          j += TILEDIM;
+          posOut += TILEDIM;
+        }
+      }
+    }
+
+  }
+  
+}
+
+//
+// Transpose when Mm and Mk don't overlap, and Mk has single rank
+//
+template <typename T>
+__global__ void transposeTiledSingleOutRank(
+  const int volMm, const int volMk, const int volMbar,
+  const int sizeMm, const int sizeMbar,
+  const int cMk,
+  const TensorConvInOut* __restrict__ glMbar,
+  const TensorConv* __restrict__ glMm,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  // Shared memory. TILEDIM*volMm elements
+  extern __shared__ char shBuffer_char[];
+  T* shBuffer = (T *)shBuffer_char;
+
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (threadIdx.x < sizeMbar) {
+    Mbar = glMbar[threadIdx.x];
+  }
+
+  TensorConv Mm;
+  Mm.c = 1;
+  Mm.d = 1;
+  if (threadIdx.x < sizeMm) {
+    Mm = glMm[threadIdx.x];
+  }
+
+  // Single register stores all minor positions per warp
+  int posMinorOut = 0;
+  {
+    int j = threadIdx.x*blockDim.y + threadIdx.y;
+    for (int i=0;i < sizeMm;i++) {
+      posMinorOut += ((j / __shfl(Mm.c,i)) % __shfl(Mm.d,i) ) * __shfl(Mm.ct,i);
+    }
+  }
+
+  // Position in Mk. blockIdx.x = tile index
+  const int xi = threadIdx.x + blockIdx.x*TILEDIM;
+
+  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
+  {
+
+    // Compute global memory positions
+    int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+    int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMajorIn += __shfl_xor(posMajorIn, i);
+      posMajorOut += __shfl_xor(posMajorOut, i);
+    }
+    posMajorOut += xi;
+
+    // Read from global memory
+    __syncthreads();
+
+    for (int k=threadIdx.y;k < TILEDIM;k+=blockDim.y) {
+      int i = k + blockIdx.x*blockDim.y;
+      if (i < volMk) {
+        for (int j=threadIdx.x;j < volMm;j+=TILEDIM) {
+          int posIn = posMajorIn + i*cMk + j;
+          int posShj = j + k*volMm;
+          shBuffer[posShj] = dataIn[posIn];
+        }
+      }
+    }
+
+    // Write to global memory
+    __syncthreads();
+
+    int jj = 0;
+    for (int j=threadIdx.y;j < volMm;) {
+      // j = position in MmO
+      // xi = position in MkO
+      int posOut = posMajorOut + __shfl(posMinorOut, jj);
+      if (xi < volMk) {
+        int posShj = j + threadIdx.x*volMm;
+        dataOut[posOut] = shBuffer[posShj];
+      }
+      jj++;
+      j += blockDim.y;
+    }
+
+  }
+  
+}
 
 //
 // General transpose. Thread block loads plan.volMmk number of elements
 //
 template <typename T, int numRegStorage>
 __global__ void transposeGeneral(
-  const int volMm, const int volMk, const int volMmk, const int volMbar,
+  const int volMmk, const int volMbar,
   const int sizeMmk, const int sizeMbar,
   const TensorConvInOut* __restrict__ gl_Mmk,
   const TensorConvInOut* __restrict__ gl_Mbar,
@@ -287,7 +395,6 @@ __global__ void transposeGeneral(
     }
 
     // Read from global memory
-    // int posMbarIn = tensorPos(posMbar, sizeMbar, Mbar.c_in, Mbar.d_in, Mbar.ct_in);
     int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
 #pragma unroll
     for (int i=16;i >= 1;i/=2) {
@@ -304,13 +411,6 @@ __global__ void transposeGeneral(
     }
 
     // Write to global memory
-      // int posMbarOut = tensorPos(posMbar, sizeMbar, Mbar.c_out, Mbar.d_out, Mbar.ct_out);
-//       int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
-// #pragma unroll
-//       for (int i=16;i >= 1;i/=2) {
-//         posMbarOut += __shfl_xor(posMbarOut, i);
-//       }
-
     __syncthreads();
 
 #pragma unroll
@@ -323,6 +423,176 @@ __global__ void transposeGeneral(
 
   }
   
+}
+
+//
+// General method with split in-rank. Mm and Mk must not overlap. Mm must have single rank
+//
+template <typename T>
+__global__ void transposeGeneralSplitInRank(
+  const int volMm, const int volMk, const int volMbar,
+  const int sizeMbar, const int cMm,
+  const int* __restrict__ posMk,
+  const TensorConvInOut* __restrict__ glMbar,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  // Shared memory. max(volMmSplit)*volMk T elements + volMk int elements
+  extern __shared__ char shBuffer_char[];
+  T* shBuffer = (T *)shBuffer_char;
+
+  const int warpLane = threadIdx.x & (warpSize - 1);
+
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (warpLane < sizeMbar) {
+    Mbar = glMbar[warpLane];
+  }
+
+  // gridDim.x = number of splits
+  // blockIdx.x = {0 ... gridDim.x - 1} is the split-index
+  // Volume of this split
+  const int volMmSplit = (volMm/gridDim.x) + (blockIdx.x < (volMm % gridDim.x));
+  // Start position in this split
+  const int xi = (volMm/gridDim.x)*blockIdx.x + min(blockIdx.x, (volMm % gridDim.x));
+  const int volMmkSplit = volMmSplit*volMk;
+
+  int maxVolMmSplit = (volMm/gridDim.x) + ((volMm % gridDim.x) > 0);
+  int* shPosMk = (int *)&shBuffer[maxVolMmSplit*volMk];
+  for (int j=threadIdx.x;j < volMk;j+=blockDim.x) {
+    shPosMk[j] = posMk[j];
+  }
+
+  for (int posMbar=blockIdx.y;posMbar < volMbar;posMbar+=gridDim.y)
+  {
+
+    int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMbarOut += __shfl_xor(posMbarOut, i);
+    }
+    posMbarOut += xi*cMm;
+
+    int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMbarIn += __shfl_xor(posMbarIn, i);
+    }
+    posMbarIn += xi;
+
+    // Read from global memory
+    __syncthreads();
+
+    for (int j=threadIdx.x;j < volMmkSplit;j+=blockDim.x) {
+      // (j % volMmSplit) = position in MmI
+      // (j / volMmSplit) = {0 ... volMk - 1} = position in MkI
+      // posMk[] translates to MkI -> MkO, so that we don't need
+      // to compute shared memory positions
+      int posIn = posMbarIn + (j % volMmSplit) + shPosMk[(j / volMmSplit)];
+      shBuffer[j] = dataIn[posIn];
+    }
+
+    // Write to global memory
+    __syncthreads();
+
+    for (int j=threadIdx.x;j < volMmkSplit;j+=blockDim.x) {
+      // (j % volMk) = position in MkO
+      // (j / volMk) = position in MmO
+      int posMkO = (j % volMk);
+      int posMmO = (j / volMk);
+      int posOut = posMbarOut + posMkO + posMmO*cMm;
+      int posShj = posMkO*volMmSplit + posMmO;
+      dataOut[posOut] = shBuffer[posShj];
+    }
+
+  }
+
+}
+
+//
+// General method with split out-rank. Mm and Mk must not overlap. Mk must have single rank.
+//
+template <typename T>
+__global__ void transposeGeneralSplitOutRank(
+  const int volMm, const int volMk, const int volMbar,
+  const int sizeMbar, const int cMk,
+  const int* __restrict__ posMm,
+  const TensorConvInOut* __restrict__ glMbar,
+  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+
+  // Shared memory. max(volMkSplit)*volMm T elements + volMm int elements
+  extern __shared__ char shBuffer_char[];
+  T* shBuffer = (T *)shBuffer_char;
+
+  const int warpLane = threadIdx.x & (warpSize - 1);
+
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (warpLane < sizeMbar) {
+    Mbar = glMbar[warpLane];
+  }
+
+  // gridDim.x = number of splits
+  // blockIdx.x = {0 ... gridDim.x - 1} is the split-index
+  // Volume of this split
+  const int volMkSplit = (volMk/gridDim.x) + (blockIdx.x < (volMk % gridDim.x));
+  // Start position in this split
+  const int xi = (volMk/gridDim.x)*blockIdx.x + min(blockIdx.x, (volMk % gridDim.x));
+  const int volMmkSplit = volMkSplit*volMm;
+
+  int maxVolMkSplit = (volMk/gridDim.x) + ((volMk % gridDim.x) > 0);
+  int* shPosMm = (int *)&shBuffer[maxVolMkSplit*volMm];
+  for (int j=threadIdx.x;j < volMm;j+=blockDim.x) {
+    shPosMm[j] = posMm[j];
+  }
+
+  for (int posMbar=blockIdx.y;posMbar < volMbar;posMbar+=gridDim.y)
+  {
+
+    int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMbarOut += __shfl_xor(posMbarOut, i);
+    }
+    posMbarOut += xi;
+
+    int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMbarIn += __shfl_xor(posMbarIn, i);
+    }
+    posMbarIn += xi*cMk;
+
+    // Read from global memory
+    __syncthreads();
+
+    for (int j=threadIdx.x;j < volMmkSplit;j+=blockDim.x) {
+      // (j % volMm) = position in MmI
+      // (j / volMm) = {0 ... volMkSplit - 1} = position in MkI_{Split}
+      int posIn = posMbarIn + (j / volMm)*cMk + (j % volMm);
+      shBuffer[j] = dataIn[posIn];
+    }
+
+    // Write to global memory
+    __syncthreads();
+
+    for (int j=threadIdx.x;j < volMmkSplit;j+=blockDim.x) {
+      // (j % volMkSplit) = position in MkO_{Split}
+      // (j / volMkSplit) = position in MmO
+      int posMkO = (j % volMkSplit);
+      int posMmO = (j / volMkSplit);
+      int posOut = posMbarOut + posMkO + shPosMm[posMmO];
+      int posShj = posMkO*volMm + posMmO;
+      dataOut[posOut] = shBuffer[posShj];
+    }
+
+  }
+
 }
 
 //
@@ -403,25 +673,24 @@ __global__ void transposeTiledLeadVolSame(
 //
 void cuttKernelSetSharedMemConfig() {  
 #define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneral<float, NREG>, cudaSharedMemBankSizeFourByte ))
-    CALL(1);
-    CALL(2);
-    CALL(3);
-    CALL(4);
-    CALL(5);
-    CALL(6);
-    CALL(7);
-    CALL(8);
+#include "calls.h"
 #undef CALL
+
 #define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneral<double, NREG>, cudaSharedMemBankSizeEightByte ))
-    CALL(1);
-    CALL(2);
-    CALL(3);
-    CALL(4);
-    CALL(5);
-    CALL(6);
-    CALL(7);
-    CALL(8);
+#include "calls.h"
 #undef CALL
+
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneralSplitInRank<float>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneralSplitInRank<double>, cudaSharedMemBankSizeEightByte));
+
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneralSplitOutRank<float>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeGeneralSplitOutRank<double>, cudaSharedMemBankSizeEightByte));
+
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleInRank<float>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleInRank<double>, cudaSharedMemBankSizeEightByte));
+
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleOutRank<float>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleOutRank<double>, cudaSharedMemBankSizeEightByte));
 
   cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleRank<float>, cudaSharedMemBankSizeFourByte));
   cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledLeadVolSame<float>, cudaSharedMemBankSizeFourByte));
@@ -437,49 +706,69 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
   int numActiveBlock;
   int numthread = lc.numthread.x * lc.numthread.y * lc.numthread.z;
   switch(method) {
-    case cuttPlan_t::General:
+    case General:
     {
-    #define CALL(TYPE, NREG) \
-      cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-        transposeGeneral<TYPE, NREG>, numthread, lc.shmemsize)
+#define CALL0(TYPE, NREG) \
+  cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
+    transposeGeneral<TYPE, NREG>, numthread, lc.shmemsize)
       switch(lc.numRegStorage) {
-        case 1:
-        if (sizeofType == 4) CALL(float,  1);
-        if (sizeofType == 8) CALL(double, 1);
-        break;
-        case 2:
-        if (sizeofType == 4) CALL(float,  2);
-        if (sizeofType == 8) CALL(double, 2);
-        break;
-        case 3:
-        if (sizeofType == 4) CALL(float,  3);
-        if (sizeofType == 8) CALL(double, 3);
-        break;
-        case 4:
-        if (sizeofType == 4) CALL(float,  4);
-        if (sizeofType == 8) CALL(double, 4);
-        break;
-        case 5:
-        if (sizeofType == 4) CALL(float,  5);
-        if (sizeofType == 8) CALL(double, 5);
-        break;
-        case 6:
-        if (sizeofType == 4) CALL(float,  6);
-        if (sizeofType == 8) CALL(double, 6);
-        break;
-        case 7:
-        if (sizeofType == 4) CALL(float,  7);
-        if (sizeofType == 8) CALL(double, 7);
-        break;
-        case 8:
-        if (sizeofType == 4) CALL(float,  8);
-        if (sizeofType == 8) CALL(double, 8);
-        break;
+#define CALL(ICASE) case ICASE: if (sizeofType == 4) CALL0(float,  ICASE); if (sizeofType == 8) CALL0(double, ICASE); break
+#include "calls.h"
       }
-    #undef CALL
+#undef CALL
+#undef CALL0
     }
     break;
-    case cuttPlan_t::TiledSingleRank:
+
+    case GeneralSplitInRank:
+    {
+      if (sizeofType == 4) {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeGeneralSplitInRank<float>, numthread, lc.shmemsize);
+      } else {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeGeneralSplitInRank<double>, numthread, lc.shmemsize);
+      }
+    }
+    break;
+
+    case GeneralSplitOutRank:
+    {
+      if (sizeofType == 4) {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeGeneralSplitOutRank<float>, numthread, lc.shmemsize);
+      } else {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeGeneralSplitOutRank<double>, numthread, lc.shmemsize);
+      }
+    }
+    break;
+
+    case TiledSingleInRank:
+    {
+      if (sizeofType == 4) {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeTiledSingleInRank<float>, numthread, lc.shmemsize);
+      } else {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeTiledSingleInRank<double>, numthread, lc.shmemsize);
+      }
+    }
+    break;
+
+    case TiledSingleOutRank:
+    {
+      if (sizeofType == 4) {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeTiledSingleOutRank<float>, numthread, lc.shmemsize);
+      } else {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
+          transposeTiledSingleOutRank<double>, numthread, lc.shmemsize);
+      }
+    }
+    break;
+
+    case TiledSingleRank:
     {
       if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
@@ -490,7 +779,8 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
       }
     }
     break;
-    case cuttPlan_t::TiledLeadVolSame:
+
+    case TiledLeadVolSame:
     {
       if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
@@ -522,63 +812,32 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
   LaunchConfig& lc) {
 
   switch(ts.method) {
-    case cuttPlan_t::General:
+    case General:
     {
       // Amount of shared memory required
-      lc.shmemsize = ts.volMmk*sizeofType;
+      lc.shmemsize = ts.shmemAlloc(sizeofType); //ts.volMmk*sizeofType;
 
       // Check that we're not using too much shared memory per block
-      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
+      if (lc.shmemsize > prop.sharedMemPerBlock) {
+        // printf("lc.shmemsize %d prop.sharedMemPerBlock %d\n", lc.shmemsize, prop.sharedMemPerBlock);
+        return 0;
+      }
 
       // Min and max number of threads we can use
       int minNumthread = ((ts.volMmk - 1)/(prop.warpSize*MAX_REG_STORAGE) + 1)*prop.warpSize;
       int maxNumthread = ((ts.volMmk - 1)/(prop.warpSize) + 1)*prop.warpSize;      
       if (minNumthread > prop.maxThreadsPerBlock) return 0;
       maxNumthread = min(prop.maxThreadsPerBlock, maxNumthread);
+      // printf("minNumthread %d maxNumthread %d\n", minNumthread, maxNumthread);
 
       // Min and max number of register storage we can use
-      // int minNumRegStorage = (ts.volMmk - 1)/maxNumthread + 1;
-      // int maxNumRegStorage = (ts.volMmk - 1)/minNumthread + 1;
+      int minNumRegStorage = (ts.volMmk - 1)/maxNumthread + 1;
+      int maxNumRegStorage = (ts.volMmk - 1)/minNumthread + 1;
+      // printf("minNumRegStorage %d maxNumRegStorage %d\n", minNumRegStorage, maxNumRegStorage);
 
-      if (maxNumthread <= 256) {
-        lc.numRegStorage = (ts.volMmk - 1)/128 + 1;
-      } else {
-        lc.numRegStorage = 6;
-      }
-
-/*
-      int bestNumActiveBlock = 0;
+      int bestVal = 0;
       int bestNumRegStorage = 0;
 
-      for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
-        lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
-        lc.numthread.x = min(prop.maxThreadsPerBlock, lc.numthread.x);
-        lc.numthread.y = 1;
-        lc.numthread.z = 1;
-        lc.numblock.x = max(1, ts.volMbar);
-        lc.numblock.x = min(256, lc.numblock.x);
-        lc.numblock.y = 1;
-        lc.numblock.z = 1;
-
-        int numActiveBlock = getNumActiveBlock(method, sizeofType, lc);
-        if (numActiveBlock > bestNumActiveBlock) {
-          bestNumActiveBlock = numActiveBlock;
-          bestNumRegStorage = lc.numRegStorage;
-        }
-
-        // lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
-        // if (lc.numRegStorage > MAX_REG_STORAGE) {
-        //   // Find number of threads that works
-        //   lc.numthread.x = (( (ts.volMmk - 1)/MAX_REG_STORAGE)/prop.warpSize + 1)*prop.warpSize;
-        //   lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
-        // }
-      }
-
-      lc.numRegStorage = bestNumRegStorage;
-  */
-
-      lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
-      lc.numthread.x = min(prop.maxThreadsPerBlock, lc.numthread.x);
       lc.numthread.y = 1;
       lc.numthread.z = 1;
       lc.numblock.x = max(1, ts.volMbar);
@@ -586,19 +845,95 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numblock.y = 1;
       lc.numblock.z = 1;
 
-      lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
-      if (lc.numRegStorage > MAX_REG_STORAGE) {
-        // Find number of threads that works
-        lc.numthread.x = (( (ts.volMmk - 1)/MAX_REG_STORAGE)/prop.warpSize + 1)*prop.warpSize;
-        lc.numRegStorage = (ts.volMmk - 1)/lc.numthread.x + 1;
+      for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
+        lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
+
+        int numActiveBlock = getNumActiveBlock(ts.method, sizeofType, lc);
+        int val = numActiveBlock*lc.numthread.x;
+        if (val > bestVal) {
+          bestVal = val;
+          bestNumRegStorage = lc.numRegStorage;
+        }
       }
 
-      // Check that we're not using too many threads or register storage
-      //if (lc.numthread.x > prop.maxThreadsPerBlock || lc.numRegStorage > MAX_REG_STORAGE) return 0;
+      if (bestNumRegStorage == 0) return 0;
 
+      lc.numRegStorage = bestNumRegStorage;
+      lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
     }
     break;
-    case cuttPlan_t::TiledSingleRank:
+
+    case GeneralSplitInRank:
+    {
+      // int maxVolMmSplit = (ts.volMm/ts.numSplit) + ((ts.volMm % ts.numSplit) > 0);
+      // lc.shmemsize = maxVolMmSplit*ts.volMk*sizeofType + ts.volMk*sizeof(int);
+      lc.shmemsize = ts.shmemAlloc(sizeofType);
+      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
+      lc.numthread.x = 1024;
+      lc.numthread.y = 1;
+      lc.numthread.z = 1;
+      lc.numblock.x = ts.numSplit;
+      lc.numblock.y = ts.volMbar;
+      lc.numblock.y = min(64/lc.numblock.x, lc.numblock.y);
+      lc.numblock.y = max(1, lc.numblock.y);
+      lc.numblock.z = 1;
+      lc.numRegStorage = 0;
+    }
+    break;
+
+    case GeneralSplitOutRank:
+    {
+      // int maxVolMkSplit = (ts.volMk/ts.numSplit) + ((ts.volMk % ts.numSplit) > 0);
+      // lc.shmemsize = maxVolMkSplit*ts.volMm*sizeofType + ts.volMm*sizeof(int);
+      lc.shmemsize = ts.shmemAlloc(sizeofType);
+      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
+      lc.numthread.x = 1024;
+      lc.numthread.y = 1;
+      lc.numthread.z = 1;
+      lc.numblock.x = ts.numSplit;
+      lc.numblock.y = ts.volMbar;
+      lc.numblock.y = min(64/lc.numblock.x, lc.numblock.y);
+      lc.numblock.y = max(1, lc.numblock.y);
+      lc.numblock.z = 1;
+      lc.numRegStorage = 0;
+    }
+    break;
+
+    case TiledSingleInRank:
+    {
+      // lc.shmemsize = (TILEDIM+1)*ts.volMk*sizeofType;
+      lc.shmemsize = ts.shmemAlloc(sizeofType);
+      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
+      lc.numthread.x = TILEDIM;
+      lc.numthread.y = 32;
+      lc.numthread.z = 1;
+      lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
+      lc.numblock.y = 1;
+      lc.numblock.z = ts.volMbar;
+      lc.numblock.z = min(64/lc.numblock.x, lc.numblock.z);
+      lc.numblock.z = max(1, lc.numblock.z);
+      lc.numRegStorage = 0;
+    }
+    break;
+
+    case TiledSingleOutRank:
+    {
+      // lc.shmemsize = TILEDIM*ts.volMm*sizeofType;
+      lc.shmemsize = ts.shmemAlloc(sizeofType);
+      if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
+      lc.numthread.x = TILEDIM;
+      lc.numthread.y = 32;
+      lc.numthread.z = 1;
+      lc.numblock.x = (ts.volMk - 1)/TILEDIM + 1;
+      lc.numblock.y = 1;
+      lc.numblock.z = ts.volMbar;
+      lc.numblock.z = min(64/lc.numblock.x, lc.numblock.z);
+      lc.numblock.z = max(1, lc.numblock.z);
+      lc.numRegStorage = 0;
+    }
+    break;
+
+    case TiledSingleRank:
     {
       lc.numthread.x = TILEDIM;
       lc.numthread.y = TILEROWS;
@@ -612,7 +947,8 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numRegStorage = 0;
     }
     break;
-    case cuttPlan_t::TiledLeadVolSame:
+
+    case TiledLeadVolSame:
     {
       lc.numthread.x = TILEDIM;
       lc.numthread.y = TILEROWS;
@@ -641,99 +977,96 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
   LaunchConfig& lc = plan.launchConfig;
   TensorSplit& ts = plan.tensorSplit;
 
-#if 0
-  printf("numthread %d %d %d numblock %d %d %d shmemsize %d numRegStorage %d\n",
-    lc.numthread.x, lc.numthread.y, lc.numthread.z,
-    lc.numblock.x, lc.numblock.y, lc.numblock.z,
-    lc.shmemsize, lc.numRegStorage);
-#endif
-
   switch(ts.method) {
-    case cuttPlan_t::General:
+    case General:
     {
       switch(lc.numRegStorage) {
-#define CALL(TYPE, NREG) \
+#define CALL0(TYPE, NREG) \
     transposeGeneral<TYPE, NREG> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
-      (ts.volMm, ts.volMk, ts.volMmk, ts.volMbar, \
-      ts.sizeMmk, ts.sizeMbar, \
+      (ts.volMmk, ts.volMbar, ts.sizeMmk, ts.sizeMbar, \
       plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut)
-        case 1:
-        if (plan.sizeofType == 4) CALL(float,  1);
-        if (plan.sizeofType == 8) CALL(double, 1);
-        break;
-        case 2:
-        if (plan.sizeofType == 4) CALL(float,  2);
-        if (plan.sizeofType == 8) CALL(double, 2);
-        break;
-        case 3:
-        if (plan.sizeofType == 4) CALL(float,  3);
-        if (plan.sizeofType == 8) CALL(double, 3);
-        break;
-        case 4:
-        if (plan.sizeofType == 4) CALL(float,  4);
-        if (plan.sizeofType == 8) CALL(double, 4);
-        break;
-        case 5:
-        if (plan.sizeofType == 4) CALL(float,  5);
-        if (plan.sizeofType == 8) CALL(double, 5);
-        break;
-        case 6:
-        if (plan.sizeofType == 4) CALL(float,  6);
-        if (plan.sizeofType == 8) CALL(double, 6);
-        break;
-        case 7:
-        if (plan.sizeofType == 4) CALL(float,  7);
-        if (plan.sizeofType == 8) CALL(double, 7);
-        break;
-        case 8:
-        if (plan.sizeofType == 4) CALL(float,  8);
-        if (plan.sizeofType == 8) CALL(double, 8);
-        break;
+#define CALL(ICASE) case ICASE: if (plan.sizeofType == 4) CALL0(float,  ICASE); if (plan.sizeofType == 8) CALL0(double, ICASE); break
+#include "calls.h"
         default:
         printf("cuttKernel no template implemented for numRegStorage %d\n", lc.numRegStorage);
         return false;
 #undef CALL
+#undef CALL0
       }
 
     }
     break;
 
-    case cuttPlan_t::TiledSingleRank:
+    case GeneralSplitInRank:
     {
 #define CALL(TYPE) \
-      transposeTiledSingleRank<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
-      (ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
-        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
+      transposeGeneralSplitInRank<TYPE> \
+      <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+      (ts.volMm, ts.volMk, ts.volMbar, ts.sizeMbar, plan.cuDimMm, \
+        plan.posMk, plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
+      if (plan.sizeofType == 4) CALL(float);
+      if (plan.sizeofType == 8) CALL(double);
+#undef CALL      
+    }
+    break;
 
-      // dim3 numthread(TILEDIM, TILEROWS, 1);
-      // dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
-      // numblock.z = min(256, plan.volMbar);
-      // numblock.z = min(65535, numblock.z);
+    case GeneralSplitOutRank:
+    {
+#define CALL(TYPE) \
+      transposeGeneralSplitOutRank<TYPE> \
+      <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+      (ts.volMm, ts.volMk, ts.volMbar, ts.sizeMbar, plan.cuDimMk, \
+        plan.posMm, plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
+      if (plan.sizeofType == 4) CALL(float);
+      if (plan.sizeofType == 8) CALL(double);
+#undef CALL      
+    }
+    break;
 
-      // printf("numthread %d %d %d numblock %d %d %d\n", numthread.x, numthread.y, numthread.z,
-      //   numblock.x, numblock.y, numblock.z);
-
+    case TiledSingleInRank:
+    {
+#define CALL(TYPE) \
+      transposeTiledSingleInRank<TYPE> \
+      <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+      (ts.volMm, ts.volMk, ts.volMbar, ts.sizeMk, ts.sizeMbar, plan.cuDimMm, \
+        plan.Mbar, plan.Mk, (TYPE *)dataIn, (TYPE *)dataOut)
       if (plan.sizeofType == 4) CALL(float);
       if (plan.sizeofType == 8) CALL(double);
 #undef CALL
     }
     break;
 
-    case cuttPlan_t::TiledLeadVolSame:
+    case TiledSingleOutRank:
+    {
+#define CALL(TYPE) \
+      transposeTiledSingleOutRank<TYPE> \
+      <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+      (ts.volMm, ts.volMk, ts.volMbar, ts.sizeMm, ts.sizeMbar, plan.cuDimMk, \
+        plan.Mbar, plan.Mm, (TYPE *)dataIn, (TYPE *)dataOut)
+      if (plan.sizeofType == 4) CALL(float);
+      if (plan.sizeofType == 8) CALL(double);
+#undef CALL
+    }
+    break;
+
+    case TiledSingleRank:
+    {
+#define CALL(TYPE) \
+      transposeTiledSingleRank<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
+      (ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
+        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
+      if (plan.sizeofType == 4) CALL(float);
+      if (plan.sizeofType == 8) CALL(double);
+#undef CALL
+    }
+    break;
+
+    case TiledLeadVolSame:
     {
 #define CALL(TYPE) \
       transposeTiledLeadVolSame<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
       (ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol, \
         plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
-
-      // dim3 numthread(TILEDIM, TILEROWS, 1);
-      // dim3 numblock((plan.readVol.x-1)/TILEDIM+1, (plan.readVol.y-1)/TILEDIM+1, plan.volMbar);
-      // numblock.z = min(256, plan.volMbar);
-      // numblock.z = min(65535, numblock.z);
-
-      // printf("numthread %d %d %d numblock %d %d %d\n", numthread.x, numthread.y, numthread.z,
-      //   numblock.x, numblock.y, numblock.z);
-
       if (plan.sizeofType == 4) CALL(float);
       if (plan.sizeofType == 8) CALL(double);
 #undef CALL

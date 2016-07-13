@@ -65,8 +65,8 @@ cuTT was designed with performance as the main goal. Here are performance benchm
 <!-- ![k40m](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k40m_july1_2016.png)
  -->
 
-![titanx](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_titanx.png)
-
+<!-- ![titanx](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_titanx.png)
+ -->
 
 Usage
 =====
@@ -199,8 +199,12 @@ cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata);
 
 KNOWN BUGS
 ==========
- * Benchmarks sometime fail because the stupid algorithm I have now to create
- random tensors of fixed volume.
+ * Benchmarks sometime fail due to the stupid algorithm I have now to create
+ random tensors with fixed volume.
+
+TODO
+====
+ * Make "tiled" method work with sets of ranks (where ranks in M_m and M_k remain in same order)
 
 Licence
 =======

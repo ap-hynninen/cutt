@@ -52,7 +52,10 @@ OS = osx
 endif
 
 # Set optimization level
-OPTLEV = -O2
+OPTLEV = -O3
+
+# Defines
+DEFS = 
 
 OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/CudaUtils.o build/cuttTimer.o
 OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
@@ -62,11 +65,11 @@ OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 #CUDAROOT = $(subst /bin/,,$(dir $(shell which nvcc)))
 CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
 
-CFLAGS = -I${CUDAROOT}/include -std=c++11
+CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS)
 
 #CUDA_CCFLAGS = 
 
-CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) -Xcompiler "$(CUDA_CCFLAGS)"
+CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CUDA_CCFLAGS)" $(DEFS)
 
 ifeq ($(OS),osx)
 CUDA_LFLAGS = -L$(CUDAROOT)/lib

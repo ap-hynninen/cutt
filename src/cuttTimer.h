@@ -38,6 +38,7 @@ class Timer {
 private:
   struct timespec tmstart, tmend;
 public:
+  Timer();
   void start();
   void stop();
   double seconds();
