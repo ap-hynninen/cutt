@@ -25,6 +25,7 @@ SOFTWARE.
 #include <vector>
 #include <algorithm>
 #include <cstring>         // strcmp
+#include <ctime>           // std::time
 #include <cmath>
 #include "cutt.h"
 #include "CudaUtils.h"
@@ -687,7 +688,6 @@ bool bench4() {
     printVec(permutation);
     printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
-*/
 
   {
     // rank 5 BW 49.30
@@ -704,6 +704,29 @@ bool bench4() {
     printVec(permutation);
     printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
   }
+*/
+
+  {
+    std::vector<int> dim = {50, 18, 50, 24, 48, 3};
+    std::vector<int> permutation = {0, 5, 4, 2, 1, 3};
+    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    printf("dimensions\n");
+    printVec(dim);
+    printf("permutation\n");
+    printVec(permutation);
+    printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  }
+
+  // {
+  //   std::vector<int> dim = {4, 16, 32, 1000};
+  //   std::vector<int> permutation = {2, 3, 1, 0};
+  //   if (!bench_tensor<long long int>(dim, permutation)) return false;
+  //   printf("dimensions\n");
+  //   printVec(dim);
+  //   printf("permutation\n");
+  //   printVec(permutation);
+  //   printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  // }
 
   return true;
 }
@@ -782,10 +805,7 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
     cudaCheck(cudaDeviceSynchronize());
 
     timer->start(dim, permutation);
-
     cuttCheck(cuttExecute(plan, dataIn, dataOut));
-    cudaCheck(cudaDeviceSynchronize());
-  
     timer->stop();
 
     printf("wall time %lfms %lf GB/s\n", timer->seconds()*1000.0, timer->GBs());
@@ -793,6 +813,7 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   cuttCheck(cuttDestroy(plan));
   return tester->checkTranspose<T>(rank, dim.data(), permutation.data(), (T *)dataOut);
+  // return true;
 }
 
 void printVec(std::vector<int>& vec) {
@@ -817,7 +838,6 @@ bool bench_memcpy(int numElem) {
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       scalarCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
-      cudaCheck(cudaDeviceSynchronize());
       timer.stop();
       // printf("%4.2lf GB/s\n", timer.GBs());
     }
@@ -832,7 +852,6 @@ bool bench_memcpy(int numElem) {
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       vectorCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
-      cudaCheck(cudaDeviceSynchronize());
       timer.stop();
       // printf("%4.2lf GB/s\n", timer.GBs());
     }
@@ -847,7 +866,6 @@ bool bench_memcpy(int numElem) {
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       memcpyFloat(numElem*2, (float *)dataIn, (float *)dataOut, 0);
-      cudaCheck(cudaDeviceSynchronize());
       timer.stop();
       // printf("%4.2lf GB/s\n", timer.GBs());
     }

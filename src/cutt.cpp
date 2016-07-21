@@ -34,7 +34,7 @@ SOFTWARE.
 
 
 // Hash table to store the plans
-static std::unordered_map< cuttHandle, cuttPlan_t* > plans;
+static std::unordered_map< cuttHandle, cuttPlan_t* > planStorage;
 
 // Current handle
 static cuttHandle curHandle = 0;
@@ -78,26 +78,33 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   curHandle++;
 
   // Check that the current handle is available (it better be!)
-  if (plans.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
+  if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
   // Get all possible ways tensor can be transposed
   int deviceID;
   cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
-  std::list<TensorSplit> tensorSplits;
-  getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
 
-  // Choose the way
-  std::list<TensorSplit>::iterator it = chooseTensorSplitHeuristic(tensorSplits);
-  if (it == tensorSplits.end()) return CUTT_INTERNAL_ERROR;
+  std::list<cuttPlan_t> plans;
+  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 
-  // Create new plan
+  // Choose the plan
+  std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
+  if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
+
+  // Create copy of the plan outside the list
   cuttPlan_t* plan = new cuttPlan_t();
-  if (!plan->setup(rank, dim, permutation, sizeofType, prop, *it)) return CUTT_INTERNAL_ERROR;
+  // NOTE: No deep copy needed here since device memory hasn't been allocated yet
+  *plan = *bestPlan;
+
+  // plan->print();
+
+  // Activate plan
+  plan->activate();
 
   // Insert plan into storage
-  plans.insert( {*handle, plan} );
+  planStorage.insert( {*handle, plan} );
 
   return CUTT_SUCCESS;
 }
@@ -116,17 +123,16 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   curHandle++;
 
   // Check that the current handle is available (it better be!)
-  if (plans.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
+  if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
   // Get all possible ways tensor can be transposed
   int deviceID;
   cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
-  std::list<TensorSplit> tensorSplits;
-  getTensorSplits(rank, dim, permutation, sizeofType, prop, tensorSplits);
-  
-  reduceTensorSplits(tensorSplits);
+
+  std::list<cuttPlan_t> plans;
+  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 
   // Set shared memory configuration if necessary
   if (!devicesReady.count(deviceID)) {
@@ -134,106 +140,69 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     devicesReady.insert(deviceID);
   }
 
-#if 0
-  std::list<TensorSplit> smallTensorSplits;
-  int smallRank;
-  std::vector<int> smallDim;
-  std::vector<int> smallPermutation;
-  reduceMbar(rank, dim, permutation, tensorSplits,
-    smallRank, smallDim, smallPermutation, smallTensorSplits);
 
   // Choose the plan
   double bestTime = 1.0e40;
-  auto bestIt = tensorSplits.end();
-  auto it = tensorSplits.begin();
+  auto bestPlan = plans.end();
   Timer timer;
-  for (auto smallIt=smallTensorSplits.begin();smallIt != smallTensorSplits.end();smallIt++,it++) {
-    // Create new small plan
-    cuttPlan_t* plan = new cuttPlan_t();
-    if (!plan->setup(smallRank, smallDim.data(), smallPermutation.data(), sizeofType, prop, *smallIt)) {
-      return CUTT_INTERNAL_ERROR;
-    }
+  std::vector<double> times;
+  for (auto it=plans.begin();it != plans.end();it++) {
+    // Activate plan
+    it->activate();
     cudaCheck(cudaDeviceSynchronize());
     timer.start();
     // Execute plan
-    if (!cuttKernel(*plan, idata, odata)) return CUTT_INTERNAL_ERROR;
-    cudaCheck(cudaDeviceSynchronize());
+    if (!cuttKernel(*it, idata, odata)) return CUTT_INTERNAL_ERROR;
     timer.stop();
     double curTime = timer.seconds();
-    plan->print();
-    printf("curTime %4.2lf\n", curTime*1000.0);
-    if (curTime < bestTime) {
-      bestTime = curTime;
-      bestIt = it;
-    }
-    delete plan;
-  }
-  if (bestIt == tensorSplits.end()) return CUTT_INTERNAL_ERROR;
-
-  // Create the actual plan
-  cuttPlan_t* bestPlan = new cuttPlan_t();
-  if (!bestPlan->setup(rank, dim, permutation, sizeofType, prop, *bestIt)) {
-    return CUTT_INTERNAL_ERROR;
-  }
-
-#else
-  // Choose the plan
-  double bestTime = 1.0e40;
-  cuttPlan_t* bestPlan = NULL;
-  Timer timer;
-  for (auto it=tensorSplits.begin();it != tensorSplits.end();it++) {
-    // Create new plan    
-    cuttPlan_t* plan = new cuttPlan_t();
-    if (!plan->setup(rank, dim, permutation, sizeofType, prop, *it)) {
-      return CUTT_INTERNAL_ERROR;
-    }
-    cudaCheck(cudaDeviceSynchronize());
-    timer.start();
-    // Execute plan
-    if (!cuttKernel(*plan, idata, odata)) return CUTT_INTERNAL_ERROR;
-    cudaCheck(cudaDeviceSynchronize());
-    timer.stop();
-    double curTime = timer.seconds();
-    // plan->print();
+    times.push_back(curTime);
+    // it->print();
     // printf("curTime %4.2lf\n", curTime*1000.0);
     if (curTime < bestTime) {
-      if (bestPlan != NULL) delete bestPlan;
       bestTime = curTime;
-      bestPlan = plan;
-    } else {
-      delete plan;
+      bestPlan = it;
     }
   }
-  if (bestPlan == NULL) return CUTT_INTERNAL_ERROR;
-#endif
+  if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
 
-  // bestPlan->print();
+  // Create copy of the plan outside the list
+  cuttPlan_t* plan = new cuttPlan_t();
+  *plan = *bestPlan;
+  // Set device pointers to NULL in the old copy of the plan so
+  // that they won't be deallocated later when the object is destroyed
+  bestPlan->nullDevicePointers();
+
+  // plan->print();
+
+  // Activate plan
+  plan->activate();
 
   // Insert plan into storage
-  plans.insert( {*handle, bestPlan} );
+  planStorage.insert( {*handle, plan} );
 
   return CUTT_SUCCESS;
 }
 
 cuttResult cuttDestroy(cuttHandle handle) {
-  auto it = plans.find(handle);
-  if (it == plans.end()) return CUTT_INVALID_PLAN;
+  auto it = planStorage.find(handle);
+  if (it == planStorage.end()) return CUTT_INVALID_PLAN;
   // Delete instance of cuttPlan_t
   delete it->second;
   // Delete entry from plan storage
-  plans.erase(it);
+  planStorage.erase(it);
   return CUTT_SUCCESS;
 }
 
 cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream) {
-  auto it = plans.find(handle);
-  if (it == plans.end()) return CUTT_INVALID_PLAN;
+  auto it = planStorage.find(handle);
+  if (it == planStorage.end()) return CUTT_INVALID_PLAN;
   it->second->setStream(stream);
+  return CUTT_SUCCESS;
 }
 
 cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata) {
-  auto it = plans.find(handle);
-  if (it == plans.end()) return CUTT_INVALID_PLAN;
+  auto it = planStorage.find(handle);
+  if (it == planStorage.end()) return CUTT_INVALID_PLAN;
 
   if (idata == odata) return CUTT_INVALID_PARAMETER;
 

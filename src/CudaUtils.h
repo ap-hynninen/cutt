@@ -36,6 +36,7 @@ SOFTWARE.
 	cudaError_t err = stmt;                            \
   if (err != cudaSuccess) {                          \
 	  fprintf(stderr, "%s in file %s, function %s\n", #stmt,__FILE__,__FUNCTION__); \
+    fprintf(stderr, "Error String: %s\n", cudaGetErrorString(err)); \
 	  exit(1); \
   }                                                  \
 } while(0)

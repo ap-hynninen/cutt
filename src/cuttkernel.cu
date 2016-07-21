@@ -45,6 +45,8 @@ int tensorPos(
 
 }
 
+#define RESTRICT __restrict__
+
 //
 // Transpose when Mm and Mk don't overlap and contain only single rank
 //
@@ -56,7 +58,7 @@ __global__ void transposeTiledSingleRank(
   const int volMbar, const int sizeMbar,
   const int2 tiledVol, const int cuDimMk, const int cuDimMm,
   const TensorConvInOut* __restrict__ glMbar,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory
   __shared__ T shTile[TILEDIM][TILEDIM+1];
@@ -140,7 +142,7 @@ __global__ void transposeTiledSingleInRank(
   const int cMm,
   const TensorConvInOut* __restrict__ glMbar,
   const TensorConv* __restrict__ glMk,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. (TILEDIM + 1)*volMk elements
   extern __shared__ char shBuffer_char[];
@@ -241,7 +243,7 @@ __global__ void transposeTiledSingleOutRank(
   const int cMk,
   const TensorConvInOut* __restrict__ glMbar,
   const TensorConv* __restrict__ glMm,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. TILEDIM*volMm elements
   extern __shared__ char shBuffer_char[];
@@ -332,7 +334,7 @@ __global__ void transposeGeneral(
   const TensorConvInOut* __restrict__ gl_Mmk,
   const TensorConvInOut* __restrict__ gl_Mbar,
   const TensorConv* __restrict__ gl_Msh,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. volMmk elements
   extern __shared__ char shBuffer_char[];
@@ -434,7 +436,7 @@ __global__ void transposeGeneralSplitInRank(
   const int sizeMbar, const int cMm,
   const int* __restrict__ posMk,
   const TensorConvInOut* __restrict__ glMbar,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. max(volMmSplit)*volMk T elements + volMk int elements
   extern __shared__ char shBuffer_char[];
@@ -520,7 +522,7 @@ __global__ void transposeGeneralSplitOutRank(
   const int sizeMbar, const int cMk,
   const int* __restrict__ posMm,
   const TensorConvInOut* __restrict__ glMbar,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. max(volMkSplit)*volMm T elements + volMm int elements
   extern __shared__ char shBuffer_char[];
@@ -607,7 +609,7 @@ __global__ void transposeTiledLeadVolSame(
   const int cuDimMk, const int cuDimMm,
   const int2 tiledVol,
   const TensorConvInOut* __restrict__ gl_Mbar,
-  const T* __restrict__ dataIn, T* __restrict__ dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   const int warpLane = threadIdx.x & (warpSize - 1);
   TensorConvInOut Mbar;
@@ -865,11 +867,12 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
     case GeneralSplitInRank:
     {
-      // int maxVolMmSplit = (ts.volMm/ts.numSplit) + ((ts.volMm % ts.numSplit) > 0);
+      int maxVolMmSplit = (ts.volMm/ts.numSplit) + ((ts.volMm % ts.numSplit) > 0);
+      int maxVolMmkSplit = maxVolMmSplit*ts.volMk;
       // lc.shmemsize = maxVolMmSplit*ts.volMk*sizeofType + ts.volMk*sizeof(int);
       lc.shmemsize = ts.shmemAlloc(sizeofType);
       if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
-      lc.numthread.x = 1024;
+      lc.numthread.x = min(1024, ((maxVolMmkSplit - 1)/prop.warpSize + 1)*prop.warpSize );
       lc.numthread.y = 1;
       lc.numthread.z = 1;
       lc.numblock.x = ts.numSplit;
@@ -883,11 +886,12 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
     case GeneralSplitOutRank:
     {
-      // int maxVolMkSplit = (ts.volMk/ts.numSplit) + ((ts.volMk % ts.numSplit) > 0);
+      int maxVolMkSplit = (ts.volMk/ts.numSplit) + ((ts.volMk % ts.numSplit) > 0);
+      int maxVolMmkSplit = maxVolMkSplit*ts.volMm;
       // lc.shmemsize = maxVolMkSplit*ts.volMm*sizeofType + ts.volMm*sizeof(int);
       lc.shmemsize = ts.shmemAlloc(sizeofType);
       if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
-      lc.numthread.x = 1024;
+      lc.numthread.x = min(1024, ((maxVolMmkSplit - 1)/prop.warpSize + 1)*prop.warpSize );
       lc.numthread.y = 1;
       lc.numthread.z = 1;
       lc.numblock.x = ts.numSplit;
@@ -905,7 +909,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.shmemsize = ts.shmemAlloc(sizeofType);
       if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
       lc.numthread.x = TILEDIM;
-      lc.numthread.y = 32;
+      lc.numthread.y = 32;//min(32, ts.volMk);
       lc.numthread.z = 1;
       lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
       lc.numblock.y = 1;
@@ -922,7 +926,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.shmemsize = ts.shmemAlloc(sizeofType);
       if (lc.shmemsize > prop.sharedMemPerBlock) return 0;
       lc.numthread.x = TILEDIM;
-      lc.numthread.y = 32;
+      lc.numthread.y = 32;//min(32, ts.volMm);
       lc.numthread.z = 1;
       lc.numblock.x = (ts.volMk - 1)/TILEDIM + 1;
       lc.numblock.y = 1;
@@ -956,7 +960,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
       lc.numblock.y = (ts.volMkBar - 1)/TILEDIM + 1;
       lc.numblock.z = ts.volMbar;
-      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
+      lc.numblock.z = min(256/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
       lc.numblock.z = max(1, lc.numblock.z);
       lc.shmemsize = 0;
       lc.numRegStorage = 0;
@@ -971,6 +975,111 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
   // Return the number of active blocks with these settings
   return getNumActiveBlock(ts.method, sizeofType, lc);
 }
+
+#if 1
+//
+// Returns estimate of the number of memory reads and writes at warp level
+//
+void cuttKernelNumMemAccess(TensorSplit& ts, cudaDeviceProp& prop, LaunchConfig& lc,
+  const int rank, const int* dim, const int* permutation, const size_t sizeofType,
+  unsigned long long int& numRead, unsigned long long int& numWrite) {
+
+  // Number of elements that are loaded per memory transaction:
+  // 128 bytes per transaction
+  unsigned int loadWidth = 128/sizeofType;
+
+  std::vector<bool> isMmk(rank, false);
+  for (int i=0;i < ts.sizeMm;i++) {
+    isMmk[i] = true;
+  }
+  for (int i=0;i < ts.sizeMk;i++) {
+    isMmk[permutation[i]] = true;
+  }
+  // Determine contigious read volume
+  unsigned int volRead = 1;
+  {
+    for (int i=0;i < rank;i++) {
+      if (!isMmk[i]) break;
+      volRead *= dim[i];
+    }
+  }
+  // Determine contigious write volume
+  unsigned int volWrite = 1;
+  {
+    for (int i=0;i < rank;i++) {
+      if (!isMmk[permutation[i]]) break;
+      volWrite *= dim[permutation[i]];
+    }
+  }
+  // Total volume
+  unsigned long long int vol = ts.volMmk*ts.volMbar;
+
+  // unsigned int numTileMm = ((ts.volMm - 1)/prop.warpSize + 1);
+  // unsigned int numTileMk = ((ts.volMk - 1)/prop.warpSize + 1);
+
+  switch(ts.method) {
+    case General:
+    {
+      numRead = ((volRead - 1)/loadWidth + 1)*vol/volRead;
+      numWrite = ((volWrite - 1)/loadWidth + 1)*vol/volWrite;
+    }
+    break;
+
+    case GeneralSplitInRank:
+    {
+      numRead = 0;
+      for (int i=0;i < ts.numSplit;i++) {
+        int volMmSplit = (ts.volMm/ts.numSplit) + (i < (ts.volMm % ts.numSplit));
+        numRead += ((volMmSplit - 1)/loadWidth + 1);
+      }
+      numRead = numRead*vol/ts.volMm;
+      numWrite = ((volWrite - 1)/loadWidth + 1)*vol/volWrite;
+    }
+    break;
+
+    case GeneralSplitOutRank:
+    {
+      numWrite = 0;
+      for (int i=0;i < ts.numSplit;i++) {
+        int volMkSplit = (ts.volMk/ts.numSplit) + (i < (ts.volMk % ts.numSplit));
+        numWrite += ((volMkSplit - 1)/loadWidth + 1);
+      }
+      numWrite = numWrite*vol/ts.volMk;
+      numRead = ((volRead - 1)/loadWidth + 1)*vol/volRead;
+    }
+    break;
+
+    case TiledSingleInRank:
+    {
+      numRead = ((ts.volMm - 1)/loadWidth + 1)*vol/ts.volMm;
+      numWrite = ((ts.volMk - 1)/loadWidth + 1)*vol/ts.volMk;
+    }
+    break;
+
+    case TiledSingleOutRank:
+    {
+      numRead = ((ts.volMm - 1)/loadWidth + 1)*vol/ts.volMm;
+      numWrite = ((ts.volMk - 1)/loadWidth + 1)*vol/ts.volMk;
+    }
+    break;
+
+    case TiledSingleRank:
+    {
+      numRead = ((ts.volMm - 1)/loadWidth + 1)*vol/ts.volMm;
+      numWrite = ((ts.volMk - 1)/loadWidth + 1)*vol/ts.volMk;
+    }
+    break;
+
+    case TiledLeadVolSame:
+    {
+      numRead = ((ts.volMm - 1)/loadWidth + 1)*vol/ts.volMm;
+      numWrite = ((ts.volMk - 1)/loadWidth + 1)*vol/ts.volMk;
+    }
+    break;
+  }
+
+}
+#endif
 
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
 

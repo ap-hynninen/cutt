@@ -39,15 +39,15 @@ GENCODE_FLAGS := $(GENCODE_SM35) $(GENCODE_SM50)
 #######################################################
 
 # Detect OS
-ifeq ($(shell uname -a|grep Linux|wc -l), 1)
+ifeq ($(shell uname -a|grep Linux|wc -l|tr -d ' '), 1)
 OS = linux
 endif
 
-ifeq ($(shell uname -a|grep titan|wc -l), 1)
+ifeq ($(shell uname -a|grep titan|wc -l|tr -d ' '), 1)
 OS = linux
 endif
 
-ifeq ($(shell uname -a|grep Darwin|wc -l), 1)
+ifeq ($(shell uname -a|grep Darwin|wc -l|tr -d ' '), 1)
 OS = osx
 endif
 
@@ -112,10 +112,10 @@ clean:
 
 build/%.o : src/%.cu
 	$(CUDAC) -c $(CUDA_CFLAGS) -o build/$*.o $<
-	echo -n "build/" > build/$*.d
+	echo -e 'build/\c' > build/$*.d
 	$(CUDAC) -M $(CUDA_CFLAGS) $< >> build/$*.d
 
 build/%.o : src/%.cpp
 	$(CC) -c $(CFLAGS) -o build/$*.o $<
-	echo -n "build/" > build/$*.d
+	echo -e 'build/\c' > build/$*.d
 	$(CC) -M $(CFLAGS) $< >> build/$*.d

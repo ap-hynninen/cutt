@@ -68,9 +68,6 @@ public:
   int sizeMbar;
   int volMbar;
 
-  // Number of active thread blocks, for General method
-  int numActiveBlock;
-
   // Number of splits, for GeneralSplitInRank and GeneralSplitOutRank methods
   int numSplit;
 
@@ -127,11 +124,35 @@ public:
 
   TensorSplit tensorSplit;
 
+  // Number of active thread blocks, for General method
+  int numActiveBlock;
+
   int cuDimMk;
   int cuDimMm;
 
   int2 tiledVol;
 
+  // Estimate of the number of global memory accesses
+  unsigned long long int numRead;
+  unsigned long long int numWrite;
+  unsigned long long int numMemAccess;
+
+  float numTransPerAccess;
+
+  //--------------
+  // Host buffers
+  //--------------
+  std::vector<TensorConvInOut> hostMbar;
+  std::vector<TensorConvInOut> hostMmk;
+  std::vector<TensorConv> hostMsh;
+  std::vector<TensorConv> hostMm;
+  std::vector<TensorConv> hostMk;
+  std::vector<int> hostPosMk;
+  std::vector<int> hostPosMm;
+
+  //----------------
+  // Device buffers
+  //----------------
   // sizeMbar
   TensorConvInOut* Mbar;
 
@@ -159,16 +180,14 @@ public:
   void setStream(cudaStream_t stream_in);
   bool setup(const int rank_in, const int* dim, const int* permutation,
     const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in);
+  void activate();
+  void nullDevicePointers();
 private:
 };
 
-void getTensorSplits(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
-  cudaDeviceProp& prop, std::list<TensorSplit>& tensorSplits);
-void reduceTensorSplits(std::list<TensorSplit>& tensorSplits);
-void reduceMbar(const int rank, const int* dim, const int* permutation,
-  std::list<TensorSplit>& tensorSplits,
-  int& smallRank, std::vector<int>& smallDim, std::vector<int>& smallPermutation,
-  std::list<TensorSplit>& smallTensorSplits);
-std::list<TensorSplit>::iterator chooseTensorSplitHeuristic(std::list<TensorSplit>& tensorSplits);
+bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
+  cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+std::list<cuttPlan_t>::iterator choosePlanHeuristic(std::list<cuttPlan_t>& plans);
 
 #endif // CUTTPLAN_H
