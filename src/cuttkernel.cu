@@ -51,11 +51,11 @@ int tensorPos(
 // Transpose when Mm and Mk don't overlap and contain only single rank
 //
 //  dim3 numthread(TILEDIM, TILEROWS, 1);
-//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+//  dim3 numblock( ((plan.volMm-1)/TILEDIM+1)*((plan.volMk-1)/TILEDIM+1), 1, plan.volMbar);
 //
 template <typename T>
 __global__ void transposeTiledSingleRank(
-  const int volMbar, const int sizeMbar,
+  const int numMm, const int volMbar, const int sizeMbar,
   const int2 tiledVol, const int cuDimMk, const int cuDimMm,
   const TensorConvInOut* __restrict__ glMbar,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
@@ -73,11 +73,14 @@ __global__ void transposeTiledSingleRank(
     Mbar = glMbar[warpLane];
   }
 
-  const int xin = blockIdx.x * TILEDIM + threadIdx.x;
-  const int yin = blockIdx.y * TILEDIM + threadIdx.y;
+  const int bx = (blockIdx.x % numMm)*TILEDIM;
+  const int by = (blockIdx.x / numMm)*TILEDIM;
 
-  const int xout = blockIdx.x * TILEDIM + threadIdx.y;
-  const int yout = blockIdx.y * TILEDIM + threadIdx.x;
+  const int xin = bx + threadIdx.x;
+  const int yin = by + threadIdx.y;
+
+  const int xout = bx + threadIdx.y;
+  const int yout = by + threadIdx.x;
 
   const unsigned int maskIny = __ballot((yin + warpLane < tiledVol.y))*(xin < tiledVol.x);
   const unsigned int maskOutx = __ballot((xout + warpLane < tiledVol.x))*(yout < tiledVol.y);
@@ -601,11 +604,11 @@ __global__ void transposeGeneralSplitOutRank(
 // Transpose when the lead dimension is the same, e.g. (1, 2, 3) -> (1, 3, 2)
 //
 //  dim3 numthread(TILEDIM, TILEROWS, 1);
-//  dim3 numblock((plan.volMm-1)/TILEDIM+1, (plan.volMk-1)/TILEDIM+1, plan.volMbar);
+//  dim3 numblock( ((plan.volMm-1)/TILEDIM+1)*((plan.volMkBar-1)/TILEDIM+1), 1, plan.volMbar);
 //
 template <typename T>
 __global__ void transposeTiledLeadVolSame(
-  const int volMbar, const int sizeMbar,
+  const int numMm, const int volMbar, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
   const int2 tiledVol,
   const TensorConvInOut* __restrict__ gl_Mbar,
@@ -623,8 +626,13 @@ __global__ void transposeTiledLeadVolSame(
 
   // int* dimMmkIn  = &transposeArg[0];
 
-  const int x = blockIdx.x * TILEDIM + threadIdx.x;
-  const int y = blockIdx.y * TILEDIM + threadIdx.y;
+  const int bx = (blockIdx.x % numMm)*TILEDIM;
+  const int by = (blockIdx.x / numMm)*TILEDIM;
+
+  const int x = bx + threadIdx.x;
+  const int y = by + threadIdx.y;
+  // const int x = blockIdx.x * TILEDIM + threadIdx.x;
+  // const int y = blockIdx.y * TILEDIM + threadIdx.y;
 
   for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
   {
@@ -708,6 +716,13 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
   int numActiveBlock;
   int numthread = lc.numthread.x * lc.numthread.y * lc.numthread.z;
   switch(method) {
+    case Trivial:
+    {
+      // This value does not matter, but should be > 0
+      numActiveBlock = 1;
+    }
+    break;
+
     case General:
     {
 #define CALL0(TYPE, NREG) \
@@ -814,6 +829,22 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
   LaunchConfig& lc) {
 
   switch(ts.method) {
+    case Trivial:
+    {
+      // These values don't matter
+      lc.numthread.x = 1;
+      lc.numthread.y = 1;
+      lc.numthread.z = 1;
+      lc.numblock.x = 1;
+      lc.numblock.y = 1;
+      lc.numblock.z = 1;
+      lc.numblock.z = 1;
+      lc.numblock.z = 1;
+      lc.shmemsize = 0;
+      lc.numRegStorage = 0;
+    }
+    break;
+
     case General:
     {
       // Amount of shared memory required
@@ -942,8 +973,10 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.x = TILEDIM;
       lc.numthread.y = TILEROWS;
       lc.numthread.z = 1;
-      lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
-      lc.numblock.y = (ts.volMk - 1)/TILEDIM + 1;
+      lc.numblock.x = ((ts.volMm - 1)/TILEDIM + 1)*((ts.volMk - 1)/TILEDIM + 1);
+      lc.numblock.y = 1;
+      // lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
+      // lc.numblock.y = (ts.volMk - 1)/TILEDIM + 1;
       lc.numblock.z = ts.volMbar;
       lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
       lc.numblock.z = max(1, lc.numblock.z);
@@ -957,10 +990,12 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.x = TILEDIM;
       lc.numthread.y = TILEROWS;
       lc.numthread.z = 1;
-      lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
-      lc.numblock.y = (ts.volMkBar - 1)/TILEDIM + 1;
+      lc.numblock.x = ((ts.volMm - 1)/TILEDIM + 1)*((ts.volMkBar - 1)/TILEDIM + 1);
+      lc.numblock.y = 1;
+      // lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
+      // lc.numblock.y = (ts.volMkBar - 1)/TILEDIM + 1;
       lc.numblock.z = ts.volMbar;
-      lc.numblock.z = min(256/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
+      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
       lc.numblock.z = max(1, lc.numblock.z);
       lc.shmemsize = 0;
       lc.numRegStorage = 0;
@@ -1018,6 +1053,13 @@ void cuttKernelNumMemAccess(TensorSplit& ts, cudaDeviceProp& prop, LaunchConfig&
   // unsigned int numTileMk = ((ts.volMk - 1)/prop.warpSize + 1);
 
   switch(ts.method) {
+    case Trivial:
+    {
+      numRead = vol/loadWidth;
+      numWrite = numRead;
+    }
+    break;
+
     case General:
     {
       numRead = ((volRead - 1)/loadWidth + 1)*vol/volRead;
@@ -1087,6 +1129,13 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
   TensorSplit& ts = plan.tensorSplit;
 
   switch(ts.method) {
+    case Trivial:
+    {
+      cudaCheck(cudaMemcpyAsync(dataOut, dataIn, ts.volMmk*ts.volMbar*plan.sizeofType,
+        cudaMemcpyDeviceToDevice, plan.stream));
+    }
+    break;
+
     case General:
     {
       switch(lc.numRegStorage) {
@@ -1162,7 +1211,7 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     {
 #define CALL(TYPE) \
       transposeTiledSingleRank<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
-      (ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
+      (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
         plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
       if (plan.sizeofType == 4) CALL(float);
       if (plan.sizeofType == 8) CALL(double);
@@ -1174,7 +1223,7 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     {
 #define CALL(TYPE) \
       transposeTiledLeadVolSame<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
-      (ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol, \
+      (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol, \
         plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
       if (plan.sizeofType == 4) CALL(float);
       if (plan.sizeofType == 8) CALL(double);

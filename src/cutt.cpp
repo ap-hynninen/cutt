@@ -46,7 +46,7 @@ cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeo
   // Check sizeofType
   if (sizeofType != 4 && sizeofType != 8) return CUTT_INVALID_PARAMETER;
   // Check rank
-  if (rank <= 1) return CUTT_INVALID_PARAMETER;
+  if (rank < 1) return CUTT_INVALID_PARAMETER;
   // Check dim[]
   for (int i=0;i < rank;i++) {
     if (dim[i] <= 1) return CUTT_INVALID_PARAMETER;
@@ -86,8 +86,21 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
+#if 0
+  // Rank reduction
+  std::vector<int> redDim;
+  std::vector<int> redPermutation;
+  reduceRanks(rank, dim, permutation, redDim, redPermutation);
+#endif
+
   std::list<cuttPlan_t> plans;
-  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+#if 0
+  if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans))
+    return CUTT_INTERNAL_ERROR;
+#else
+  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans))
+    return CUTT_INTERNAL_ERROR;
+#endif
 
   // Choose the plan
   std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
@@ -125,6 +138,13 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   // Check that the current handle is available (it better be!)
   if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
+#if 0
+  // Rank reduction
+  std::vector<int> redDim;
+  std::vector<int> redPermutation;
+  reduceRanks(rank, dim, permutation, redDim, redPermutation);
+#endif
+
   // Get all possible ways tensor can be transposed
   int deviceID;
   cudaCheck(cudaGetDevice(&deviceID));
@@ -132,7 +152,12 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
   std::list<cuttPlan_t> plans;
+#if 0
+  if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans))
+    return CUTT_INTERNAL_ERROR;
+#else
   if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+#endif
 
   // Set shared memory configuration if necessary
   if (!devicesReady.count(deviceID)) {
@@ -164,6 +189,8 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     }
   }
   if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
+
+  // bestPlan = plans.begin();
 
   // Create copy of the plan outside the list
   cuttPlan_t* plan = new cuttPlan_t();

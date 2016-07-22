@@ -31,6 +31,9 @@ SOFTWARE.
 
 void printMethod(int method) {
   switch(method) {
+    case Trivial:
+    printf("Trivial");
+    break;
     case General:
     printf("General");
     break;
@@ -203,6 +206,12 @@ size_t TensorSplit::shmem() const {
 
   switch(method) {
 
+    case Trivial:
+    {
+      vol = 0;
+    }
+    break;
+
     case General:
     {
       vol = volMmk;
@@ -259,6 +268,12 @@ size_t TensorSplit::volMmkUsed() const {
   size_t vol = 0;
 
   switch(method) {
+
+    case Trivial:
+    {
+      vol = volMmk;
+    }
+    break;
 
     case General:
     {
@@ -318,6 +333,12 @@ size_t TensorSplit::shmemAlloc(int sizeofType) const {
 
   switch(method) {
 
+    case Trivial:
+    {
+      vol = 0;
+    }
+    break;
+
     case General:
     {
       vol = (size_t)volMmk*sizeofType;
@@ -367,16 +388,107 @@ size_t TensorSplit::shmemAlloc(int sizeofType) const {
   return vol;
 }
 
+//
+// Turns out that combining ranks does not lead to better performance in general
+//
+#if 0
+//
+// Reduce ranks by combining groups of ranks are in consequtive order
+//
+void reduceRanks(const int rank, const int* dim, const int* permutation,
+  std::vector<int>& redDim, std::vector<int>& redPermutation) {
+
+  // Previous permutation value,
+  // start with impossible value so that we always do push_back(permutation[0])
+  int prev = -2;
+  for (int i=0;i < rank;i++) {
+    int cur = permutation[i];
+    if (cur == prev + 1) {
+      // Skip over ranks that are in consequtive order and
+      // combine dimensions
+      redDim.back() *= dim[cur];
+    } else {
+      // Include ranks that start the consequtive sequence
+      redPermutation.push_back(cur);
+      // NOTE: redDim will be in permuted order, re-order after dust settles
+      redDim.push_back(dim[cur]);
+    }
+    prev = cur;
+  }
+
+  // Re-number redPermutation
+  std::vector<int> tmp(rank, -1);
+  for (int i=0;i < redPermutation.size();i++) {
+    tmp[redPermutation[i]] = i;
+  }
+  int j = 0;
+  for (int i=0;i < rank;i++) {
+    if (tmp[i] != -1) {
+      tmp[j++] = tmp[i];
+    }
+  }
+  for (int i=0;i < redPermutation.size();i++) {
+    redPermutation[tmp[i]] = i;
+  }
+
+  // Re-order redDim
+  for (int i=0;i < redDim.size();i++) {
+    tmp[redPermutation[i]] = redDim[i];
+  }  
+  for (int i=0;i < redDim.size();i++) {
+    redDim[i] = tmp[i];
+  }
+
+  for (int i=0;i < rank;i++) {
+    printf("%d ", dim[i]);
+  }
+  printf("| ");
+  for (int i=0;i < rank;i++) {
+    printf("%d ", permutation[i]);
+  }
+  printf("\n");
+
+  for (int i=0;i < redPermutation.size();i++) {
+    printf("%d ", redDim[i]);
+  }
+  printf("| ");
+  for (int i=0;i < redPermutation.size();i++) {
+    printf("%d ", redPermutation[i]);
+  }
+  printf("\n");
+
+}
+#endif
+
+bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+
+  if (rank == 1) {
+    TensorSplit ts;
+    ts.method = Trivial;
+    ts.update(1, 1, rank, dim, permutation);    
+    LaunchConfig lc;
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    if (numActiveBlock > 0) {
+      cuttPlan_t plan;
+      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      plans.push_back(plan);
+    }
+  }
+
+  return true;
+}
+
 bool createTiledSingleInRankPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
-  LaunchConfig lc;
   for (int numMk=2;numMk < rank;numMk++) {
     TensorSplit ts;
     ts.method = TiledSingleInRank;
     ts.update(1, numMk, rank, dim, permutation);
     // If Mm and Mk overlap, break out of the loop
     if (ts.sizeMmk != numMk + 1) break;
+    LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
     if (numActiveBlock > 0) {
       cuttPlan_t plan;
@@ -391,13 +503,13 @@ bool createTiledSingleInRankPlans(const int rank, const int* dim, const int* per
 bool createTiledSingleOutRankPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
-  LaunchConfig lc;
   for (int numMm=2;numMm < rank;numMm++) {
     TensorSplit ts;
     ts.method = TiledSingleOutRank;
     ts.update(numMm, 1, rank, dim, permutation);
     // If Mm and Mk overlap, break out of the loop
     if (ts.sizeMmk != numMm + 1) break;
+    LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
     if (numActiveBlock > 0) {
       cuttPlan_t plan;
@@ -412,13 +524,17 @@ bool createTiledSingleOutRankPlans(const int rank, const int* dim, const int* pe
 bool createTiledSingleRankPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
-  if (permutation[0] != 0) {
+  if (permutation[0] != 0 && rank > 1) {
     TensorSplit ts;
     ts.method = TiledSingleRank;
     ts.update(1, 1, rank, dim, permutation);    
-    cuttPlan_t plan;
-    if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
-    plans.push_back(plan);
+    LaunchConfig lc;
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    if (numActiveBlock > 0) {
+      cuttPlan_t plan;
+      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      plans.push_back(plan);
+    }
   }
 
   return true;
@@ -440,9 +556,13 @@ bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* perm
     } else {
       ts.update(numMmMkSame - 1, numMmMkSame, rank, dim, permutation);      
     }
-    cuttPlan_t plan;
-    if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
-    plans.push_back(plan);
+    LaunchConfig lc;
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    if (numActiveBlock > 0) {
+      cuttPlan_t plan;
+      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      plans.push_back(plan);
+    }
   }
 
   return true;
@@ -548,6 +668,7 @@ bool createGeneralSplitOutRankPlans(const int rank, const int* dim, const int* p
 bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
+  if (!createTrivialPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledLeadVolSamePlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledSingleInRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledSingleOutRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
@@ -565,7 +686,7 @@ bool comp_memaccess(const cuttPlan_t& lhs, const cuttPlan_t& rhs) {
 
   double dp = fabs(((double)lhs.numMemAccess - (double)rhs.numMemAccess)/(double)std::min(lhs.numMemAccess, rhs.numMemAccess));
   // printf("dp %lf\n", dp);
-  if (dp < 0.15) {
+  if (dp < 0.20) {
     // If number of mem accesses are close, choose the one with largest Mmk
     size_t lhs_nab = (lts.method == General) ? std::min(20, lhs.numActiveBlock) : lhs.numActiveBlock;
     size_t rhs_nab = (rts.method == General) ? std::min(20, rhs.numActiveBlock) : rhs.numActiveBlock;
@@ -585,13 +706,48 @@ bool operator>(const cuttPlan_t& lhs, const cuttPlan_t& rhs) {
   const TensorSplit& lts = lhs.tensorSplit;
   const TensorSplit& rts = rhs.tensorSplit;
 
+  // Trivial method always wins
+  if (lts.method == Trivial) return true;
+  if (rts.method == Trivial) return false;
+
 #if 1
+  // General method wins over TiledLeadVolSame when volMmk is small
+  // (empirical observation on Tesla K20x)
   if (lts.method == General && rts.method == TiledLeadVolSame && rts.volMmk <= 8000) {
     return true;
   }
   if (lts.method == TiledLeadVolSame && lts.volMmk <= 8000 && rts.method == General) {
     return false;
   }
+
+  // if (lts.method == General && rts.method == TiledSingleOutRank) {
+  //   return true;
+  // }
+  // if (lts.method == TiledSingleOutRank && rts.method == General) {
+  //   return false;
+  // }
+
+  // if (lts.method == General && rts.method == TiledSingleInRank) {
+  //   return true;
+  // }
+  // if (lts.method == TiledSingleInRank && rts.method == General) {
+  //   return false;
+  // }
+
+  // if (lts.method == General && rts.method == GeneralSplitOutRank) {
+  //   return true;
+  // }
+  // if (lts.method == GeneralSplitOutRank && rts.method == General) {
+  //   return false;
+  // }
+
+  // if (lts.method == General && rts.method == GeneralSplitInRank) {
+  //   return true;
+  // }
+  // if (lts.method == GeneralSplitInRank && rts.method == General) {
+  //   return false;
+  // }
+
   return comp_memaccess(lhs, rhs);
 #else
   if (
@@ -781,7 +937,7 @@ void reducePlans(std::list<cuttPlan_t>& plans, int method) {
 //
 std::list<cuttPlan_t>::iterator choosePlanHeuristic(std::list<cuttPlan_t>& plans) {
 
-  for (int method = General;method < NumTransposeMethods;method++) {
+  for (int method = Trivial;method < NumTransposeMethods;method++) {
     reducePlans(plans, method);
   }
 
@@ -840,6 +996,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
 
   // Setup launch configuration
   numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, tensorSplit, prop, launchConfig);
+  if (numActiveBlock == 0) return false;
 
   // Build cI
   int* I = new int[rank];
@@ -865,9 +1022,8 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
     tiledVol.y = dim[rankMk];
   }
 
-  // Build MmI and MkI
+  // Build MmI
   std::vector<int> MmI(tensorSplit.sizeMm);
-  // std::vector<int> MkI(tensorSplit.sizeMk);
   {
     int iMm = 0;
     int iMk = 0;
@@ -875,9 +1031,6 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
       if (isMm[i]) {
         MmI[iMm++] = i;
       }
-      // if (isMk[i]) {
-      //   MkI[iMk++] = i;
-      // }
     }
   }
 
@@ -970,36 +1123,6 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
       hostMsh[i].ct = cMmkI.get(qti);
     }
 
-#if 1
-    // Number of threads within a warp accessing each bank
-    // NOTE: Broadcast never happends since we won't be accessing same word in the bank
-    //       (if we did, this would mean there's a bug in the transpose code)
-    // int maxNumAccess = 0;
-    // {
-    //   std::vector<int> numAccess(prop.warpSize, 0);
-    //   for (int j=0;j < std::min(tensorSplit.volMmk, prop.warpSize);j++) {
-    //     int pos = 0;
-    //     for (int i=0;i < tensorSplit.sizeMmk;i++) {
-    //       pos += ((j / hostMsh2[i].c) % hostMsh2[i].d) * hostMsh2[i].ct;
-    //     }
-    //     int bank = pos % prop.warpSize;
-    //     maxNumAccess = std::max(maxNumAccess, ++numAccess[bank]);
-    //   }
-    //   // printf("bank conflict %d ways\n", maxNumAccess);
-    //   // for (int i=0;i < tensorSplit.sizeMmk;i++) {
-    //   //   for (int j=0;j < prop.warpSize;j++) {
-    //   //     int pos = ((j / hostMsh2[i].c) % hostMsh2[i].d) * hostMsh2[i].ct;
-    //   //     printf("%d ", pos % prop.warpSize);
-    //   //   }
-    //   //   printf("\n");
-    //   // }
-    //   // for (int i=0;i < prop.warpSize;i++) {
-    //   //   printf("%d ", numAccess[i]);
-    //   // }
-    //   // printf("\n");
-    // }
-
-    // int maxNumAccessFull = 0;
     int numTotAccess = 0;
     int numIdealAccess = 0;
     {
@@ -1016,7 +1139,6 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
             }
             int bank = pos % prop.warpSize;
             ++numAccess[bank];
-            // maxNumAccessFull = std::max(maxNumAccessFull, ++numAccess[bank]);
           }
         }
         int maxNumAccess = 0;
@@ -1028,16 +1150,8 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
       }
       // Calculate number of transactions per access
       numTransPerAccess = (float)numTotAccess/(float)numIdealAccess;
-      // printf(" and full with %d ways\n", maxNumAccess);
     }
 
-    // if (maxNumAccess != maxNumAccessFull) {
-    //   printf("maxNumAccess maxNumAccessFull %d %d\n", maxNumAccess, maxNumAccessFull);
-    //   exit(1);
-    // }
-
-#endif
-    
   }
 
   if (tensorSplit.method == TiledSingleInRank) {

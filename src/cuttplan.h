@@ -35,7 +35,7 @@ const int TILEDIM = 32;
 const int TILEROWS = 8;
 
 // Transposing methods
-enum {Unknown, General,
+enum {Unknown, Trivial, General,
   GeneralSplitInRank, GeneralSplitOutRank,
   TiledSingleInRank, TiledSingleOutRank,
   TiledSingleRank, TiledLeadVolSame,
@@ -184,6 +184,11 @@ public:
   void nullDevicePointers();
 private:
 };
+
+#if 0
+void reduceRanks(const int rank, const int* dim, const int* permutation,
+  std::vector<int>& redDim, std::vector<int>& redPermutation);
+#endif
 
 bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);

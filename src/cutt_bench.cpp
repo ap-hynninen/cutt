@@ -707,8 +707,8 @@ bool bench4() {
 */
 
   {
-    std::vector<int> dim = {50, 18, 50, 24, 48, 3};
-    std::vector<int> permutation = {0, 5, 4, 2, 1, 3};
+    std::vector<int> dim = {5, 23, 6, 8, 15, 16, 23, 5};
+    std::vector<int> permutation = {4, 6, 3, 5, 0, 2, 7, 1};
     if (!bench_tensor<long long int>(dim, permutation)) return false;
     printf("dimensions\n");
     printVec(dim);
@@ -718,8 +718,8 @@ bool bench4() {
   }
 
   // {
-  //   std::vector<int> dim = {4, 16, 32, 1000};
-  //   std::vector<int> permutation = {2, 3, 1, 0};
+  //   std::vector<int> dim = {32*50, 32*32, 100};
+  //   std::vector<int> permutation = {1, 0, 2};
   //   if (!bench_tensor<long long int>(dim, permutation)) return false;
   //   printf("dimensions\n");
   //   printVec(dim);
