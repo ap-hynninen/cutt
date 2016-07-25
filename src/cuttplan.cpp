@@ -1273,34 +1273,34 @@ void cuttPlan_t::activate() {
 
   if (tensorSplit.sizeMbar > 0) {
     allocate_device<TensorConvInOut>(&Mbar, tensorSplit.sizeMbar);
-    copy_HtoD_sync<TensorConvInOut>(hostMbar.data(), Mbar, tensorSplit.sizeMbar);
+    copy_HtoD<TensorConvInOut>(hostMbar.data(), Mbar, tensorSplit.sizeMbar, stream);
   }
 
   if (tensorSplit.method == General) {
     allocate_device<TensorConvInOut>(&Mmk, tensorSplit.sizeMmk);
-    copy_HtoD_sync<TensorConvInOut>(hostMmk.data(), Mmk, tensorSplit.sizeMmk);
+    copy_HtoD<TensorConvInOut>(hostMmk.data(), Mmk, tensorSplit.sizeMmk, stream);
     allocate_device<TensorConv>(&Msh, tensorSplit.sizeMmk);
-    copy_HtoD_sync<TensorConv>(hostMsh.data(), Msh, tensorSplit.sizeMmk);
+    copy_HtoD<TensorConv>(hostMsh.data(), Msh, tensorSplit.sizeMmk, stream);
   }
 
   if (tensorSplit.method == TiledSingleInRank) {
     allocate_device<TensorConv>(&Mk, tensorSplit.sizeMk);
-    copy_HtoD_sync<TensorConv>(hostMk.data(), Mk, tensorSplit.sizeMk);
+    copy_HtoD<TensorConv>(hostMk.data(), Mk, tensorSplit.sizeMk, stream);
   }
 
   if (tensorSplit.method == TiledSingleOutRank) {
     allocate_device<TensorConv>(&Mm, tensorSplit.sizeMm);
-    copy_HtoD_sync<TensorConv>(hostMm.data(), Mm, tensorSplit.sizeMm);
+    copy_HtoD<TensorConv>(hostMm.data(), Mm, tensorSplit.sizeMm, stream);
   }
 
   if (tensorSplit.method == GeneralSplitInRank) {
     allocate_device<int>(&posMk, tensorSplit.volMk);
-    copy_HtoD_sync<int>(hostPosMk.data(), posMk, tensorSplit.volMk);
+    copy_HtoD<int>(hostPosMk.data(), posMk, tensorSplit.volMk, stream);
   }
 
   if (tensorSplit.method == GeneralSplitOutRank) {
     allocate_device<int>(&posMm, tensorSplit.volMm);
-    copy_HtoD_sync<int>(hostPosMm.data(), posMm, tensorSplit.volMm);
+    copy_HtoD<int>(hostPosMm.data(), posMm, tensorSplit.volMm, stream);
   }
 
 }

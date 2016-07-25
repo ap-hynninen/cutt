@@ -49,11 +49,13 @@ typedef enum cuttResult_t {
 // dim[rank]         = Dimensions of the tensor
 // permutation[rank] = Transpose permutation
 // sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// stream            = CUDA stream (0 if no stream is used)
 //
 // Returns
 // Success/unsuccess code
 // 
-cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType);
+cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  cudaStream_t stream);
 
 //
 // Create plan and choose implementation by measuring performance
@@ -64,6 +66,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 // dim[rank]         = Dimensions of the tensor
 // permutation[rank] = Transpose permutation
 // sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// stream            = CUDA stream (0 if no stream is used)
 // idata             = Input data size product(dim)
 // odata             = Output data size product(dim)
 //
@@ -71,7 +74,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 // Success/unsuccess code
 // 
 cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
-  void* idata, void* odata);
+  cudaStream_t stream, void* idata, void* odata);
 
 //
 // Destroy plan
@@ -83,18 +86,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 // Success/unsuccess code
 //
 cuttResult cuttDestroy(cuttHandle handle);
-
-//
-// Associate CUDA stream with plan
-//
-// Parameters
-// handle            = Handle to the cuTT plan
-// stream            = CUDA stream
-// 
-// Returns
-// Success/unsuccess code
-//
-cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream);
 
 //
 // Execute plan out-of-place

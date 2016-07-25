@@ -7,7 +7,7 @@ Copyright (c) 2016 Antti-Pekka Hynninen
 
 Copyright (c) 2016 Oak Ridge National Laboratory (UT-Batelle)
 
-Version 1.0
+Version 1.1
 
 Installation
 ============
@@ -99,12 +99,12 @@ int main() {
   // double* idata : size product(dim)
   // double* odata : size product(dim)
 
-  // Option 1: Create plan and choose implementation based on heuristics
+  // Option 1: Create plan on NULL stream and choose implementation based on heuristics
   cuttHandle plan;
-  cuttCheck(cuttPlan(&plan, 4, dim, permutation, sizeof(double)));
+  cuttCheck(cuttPlan(&plan, 4, dim, permutation, sizeof(double), 0));
 
-  // Option 2: Create plan and choose implementation based on performance measurements
-  // cuttCheck(cuttPlanMeasure(&plan, 4, dim, permutation, sizeof(double), idata, odata));
+  // Option 2: Create plan on NULL stream and choose implementation based on performance measurements
+  // cuttCheck(cuttPlanMeasure(&plan, 4, dim, permutation, sizeof(double), 0, idata, odata));
 
   // Execute plan
   cuttCheck(cuttExecute(plan, idata, odata));
@@ -136,11 +136,13 @@ cuTT API
 // dim[rank]         = Dimensions of the tensor
 // permutation[rank] = Transpose permutation
 // sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// stream            = CUDA stream (0 if no stream is used)
 //
 // Returns
 // Success/unsuccess code
 // 
-cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType);
+cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  cudaStream_t stream);
 
 //
 // Create plan and choose implementation by measuring performance
@@ -151,6 +153,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 // dim[rank]         = Dimensions of the tensor
 // permutation[rank] = Transpose permutation
 // sizeofType        = Size of the elements of the tensor in bytes (=4 or 8)
+// stream            = CUDA stream (0 if no stream is used)
 // idata             = Input data size product(dim)
 // odata             = Output data size product(dim)
 //
@@ -158,8 +161,8 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 // Success/unsuccess code
 // 
 cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
-  void* idata, void* odata);
-
+  cudaStream_t stream, void* idata, void* odata);
+  
 //
 // Destroy plan
 //
@@ -170,18 +173,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 // Success/unsuccess code
 //
 cuttResult cuttDestroy(cuttHandle handle);
-
-//
-// Associate CUDA stream with plan
-//
-// Parameters
-// handle            = Handle to the cuTT plan
-// stream            = CUDA stream
-// 
-// Returns
-// Success/unsuccess code
-//
-cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream);
 
 //
 // Execute plan out-of-place

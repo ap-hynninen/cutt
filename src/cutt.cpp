@@ -46,7 +46,7 @@ cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeo
   // Check sizeofType
   if (sizeofType != 4 && sizeofType != 8) return CUTT_INVALID_PARAMETER;
   // Check rank
-  if (rank < 1) return CUTT_INVALID_PARAMETER;
+  if (rank <= 1) return CUTT_INVALID_PARAMETER;
   // Check dim[]
   for (int i=0;i < rank;i++) {
     if (dim[i] <= 1) return CUTT_INVALID_PARAMETER;
@@ -67,7 +67,8 @@ cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeo
   return CUTT_SUCCESS;
 }
 
-cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType) {
+cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
+  cudaStream_t stream) {
 
   // Check that input parameters are valid
   cuttResult inpCheck = cuttPlanCheckInput(rank, dim, permutation, sizeofType);
@@ -113,6 +114,9 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 
   // plan->print();
 
+  // Set stream
+  plan->setStream(stream);
+
   // Activate plan
   plan->activate();
 
@@ -123,7 +127,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 }
 
 cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
-  void* idata, void* odata) {
+  cudaStream_t stream, void* idata, void* odata) {
 
   // Check that input parameters are valid
   cuttResult inpCheck = cuttPlanCheckInput(rank, dim, permutation, sizeofType);
@@ -201,6 +205,9 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 
   // plan->print();
 
+  // Set stream
+  plan->setStream(stream);
+
   // Activate plan
   plan->activate();
 
@@ -217,13 +224,6 @@ cuttResult cuttDestroy(cuttHandle handle) {
   delete it->second;
   // Delete entry from plan storage
   planStorage.erase(it);
-  return CUTT_SUCCESS;
-}
-
-cuttResult cuttSetStream(cuttHandle handle, cudaStream_t stream) {
-  auto it = planStorage.find(handle);
-  if (it == planStorage.end()) return CUTT_INVALID_PLAN;
-  it->second->setStream(stream);
   return CUTT_SUCCESS;
 }
 

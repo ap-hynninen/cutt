@@ -364,41 +364,34 @@ bool test4() {
   std::vector<int> dim = {24, 32, 16, 36, 43, 9};
   std::vector<int> permutation = {5, 1, 4, 2, 3, 0};
 
-  cudaStream_t stream1;
-  cudaCheck(cudaStreamCreate(&stream1));
-  cudaStream_t stream2;
-  cudaCheck(cudaStreamCreate(&stream2));
+  const int numStream = 10;
 
-  long long int* dataOut2 = NULL;
-  allocate_device<long long int>(&dataOut2, dataSize);
-  clear_device_array<long long int>(dataOut2, dataSize, stream1);
-
-  cuttHandle plan1;
-  cuttCheck(cuttPlan(&plan1, dim.size(), dim.data(), permutation.data(), sizeof(double)));
-  cuttCheck(cuttSetStream(plan1, stream1));
-  cuttCheck(cuttExecute(plan1, dataIn, dataOut));
-
-  cuttHandle plan2;
-  cuttCheck(cuttPlan(&plan2, dim.size(), dim.data(), permutation.data(), sizeof(double)));
-  cuttCheck(cuttSetStream(plan2, stream2));
-  cuttCheck(cuttExecute(plan2, dataIn, dataOut2));
+  cudaStream_t streams[numStream];
+  for (int i=0;i < numStream;i++) {
+    cudaCheck(cudaStreamCreate(&streams[i]));
+  }
 
   cudaCheck(cudaDeviceSynchronize());
 
-  bool run1 = tester->checkTranspose(dim.size(), dim.data(), permutation.data(), (long long int *)dataOut);
-  bool run2 = tester->checkTranspose(dim.size(), dim.data(), permutation.data(), (long long int *)dataOut2);
+  cuttHandle plans[numStream];
+
+  for (int i=0;i < numStream;i++) {
+    cuttCheck(cuttPlan(&plans[i], dim.size(), dim.data(), permutation.data(), sizeof(double), streams[i]));
+    cuttCheck(cuttExecute(plans[i], dataIn, dataOut));
+  }
 
   cudaCheck(cudaDeviceSynchronize());
 
-  cuttCheck(cuttDestroy(plan1));
-  cuttCheck(cuttDestroy(plan2));
+  bool run_ok = tester->checkTranspose(dim.size(), dim.data(), permutation.data(), (long long int *)dataOut);
 
-  deallocate_device<long long int>(&dataOut2);
-  cudaCheck(cudaStreamDestroy(stream1));
-  cudaCheck(cudaStreamDestroy(stream2));
+  cudaCheck(cudaDeviceSynchronize());
 
-  // return run1;
-  return (run1 && run2);
+  for (int i=0;i < numStream;i++) {
+    cuttCheck(cuttDestroy(plans[i]));
+    cudaCheck(cudaStreamDestroy(streams[i]));
+  }
+
+  return run_ok;
 }
 
 template <typename T>
@@ -432,7 +425,7 @@ bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
   }
 
   cuttHandle plan;
-  cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
+  cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T), 0));
   clear_device_array<T>((T *)dataOut, vol);
   cudaCheck(cudaDeviceSynchronize());
 

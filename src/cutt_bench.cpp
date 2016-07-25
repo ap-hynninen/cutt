@@ -788,9 +788,9 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   cuttHandle plan;
   if (use_cuttPlanMeasure) {
-    cuttCheck(cuttPlanMeasure(&plan, rank, dim.data(), permutation.data(), sizeof(T), dataIn, dataOut));
+    cuttCheck(cuttPlanMeasure(&plan, rank, dim.data(), permutation.data(), sizeof(T), 0, dataIn, dataOut));
   } else {
-    cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T)));
+    cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T), 0));
   }
 
   cuttTimer* timer;
