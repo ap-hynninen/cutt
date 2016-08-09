@@ -102,6 +102,7 @@ public:
   void stop();
   double seconds();
   double GBs();
+  double GiBs();
   double getBest(int rank);
   double getWorst(int rank);
   double getWorst(int rank, std::vector<int>& dim, std::vector<int>& permutation);

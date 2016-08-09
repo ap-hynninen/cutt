@@ -32,7 +32,6 @@ SOFTWARE.
 #include "cuttTimer.h"
 #include "cutt.h"
 
-
 // Hash table to store the plans
 static std::unordered_map< cuttHandle, cuttPlan_t* > planStorage;
 
@@ -87,21 +86,9 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
-#if 0
-  // Rank reduction
-  std::vector<int> redDim;
-  std::vector<int> redPermutation;
-  reduceRanks(rank, dim, permutation, redDim, redPermutation);
-#endif
-
   std::list<cuttPlan_t> plans;
-#if 0
-  if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans))
-    return CUTT_INTERNAL_ERROR;
-#else
   if (!createPlans(rank, dim, permutation, sizeofType, prop, plans))
     return CUTT_INTERNAL_ERROR;
-#endif
 
   // Choose the plan
   std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
@@ -111,8 +98,6 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   cuttPlan_t* plan = new cuttPlan_t();
   // NOTE: No deep copy needed here since device memory hasn't been allocated yet
   *plan = *bestPlan;
-
-  // plan->print();
 
   // Set stream
   plan->setStream(stream);
@@ -142,13 +127,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   // Check that the current handle is available (it better be!)
   if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
-#if 0
-  // Rank reduction
-  std::vector<int> redDim;
-  std::vector<int> redPermutation;
-  reduceRanks(rank, dim, permutation, redDim, redPermutation);
-#endif
-
   // Get all possible ways tensor can be transposed
   int deviceID;
   cudaCheck(cudaGetDevice(&deviceID));
@@ -156,19 +134,13 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
   std::list<cuttPlan_t> plans;
-#if 0
-  if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans))
-    return CUTT_INTERNAL_ERROR;
-#else
   if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
-#endif
 
   // Set shared memory configuration if necessary
   if (!devicesReady.count(deviceID)) {
     cuttKernelSetSharedMemConfig();
     devicesReady.insert(deviceID);
   }
-
 
   // Choose the plan
   double bestTime = 1.0e40;
@@ -185,8 +157,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     timer.stop();
     double curTime = timer.seconds();
     times.push_back(curTime);
-    // it->print();
-    // printf("curTime %4.2lf\n", curTime*1000.0);
     if (curTime < bestTime) {
       bestTime = curTime;
       bestPlan = it;
@@ -194,7 +164,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   }
   if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
 
-  // bestPlan = plans.begin();
 
   // Create copy of the plan outside the list
   cuttPlan_t* plan = new cuttPlan_t();
@@ -202,8 +171,6 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   // Set device pointers to NULL in the old copy of the plan so
   // that they won't be deallocated later when the object is destroyed
   bestPlan->nullDevicePointers();
-
-  // plan->print();
 
   // Set stream
   plan->setStream(stream);

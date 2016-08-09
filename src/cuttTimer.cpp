@@ -162,6 +162,15 @@ double cuttTimer::GBs() {
 }
 
 //
+// Returns the bandwidth of the last run in GiB/s
+//
+double cuttTimer::GiBs() {
+  const double iBILLION = 1073741824.0;
+  double sec = seconds();
+  return (sec == 0.0) ? 0.0 : (double)(curBytes)/(iBILLION*sec);
+}
+
+//
 // Returns the best performing tensor transpose for rank
 //
 double cuttTimer::getBest(int rank) {

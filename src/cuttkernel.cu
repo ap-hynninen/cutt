@@ -57,7 +57,7 @@ template <typename T>
 __global__ void transposeTiledSingleRank(
   const int numMm, const int volMbar, const int sizeMbar,
   const int2 tiledVol, const int cuDimMk, const int cuDimMm,
-  const TensorConvInOut* __restrict__ glMbar,
+  const TensorConvInOut* RESTRICT glMbar,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory
@@ -137,14 +137,15 @@ __global__ void transposeTiledSingleRank(
 
 //
 // Transpose when Mm and Mk don't overlap, and Mm has single rank
+// dim3 numblock( (ts.volMm - 1)/TILEDIM + 1, 1, plan.volMbar);
 //
 template <typename T>
 __global__ void transposeTiledSingleInRank(
   const int volMm, const int volMk, const int volMbar,
   const int sizeMk, const int sizeMbar,
   const int cMm,
-  const TensorConvInOut* __restrict__ glMbar,
-  const TensorConv* __restrict__ glMk,
+  const TensorConvInOut* RESTRICT glMbar,
+  const TensorConv* RESTRICT glMk,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. (TILEDIM + 1)*volMk elements
@@ -238,14 +239,15 @@ __global__ void transposeTiledSingleInRank(
 
 //
 // Transpose when Mm and Mk don't overlap, and Mk has single rank
+// dim3 numblock((ts.volMk - 1)/TILEDIM + 1, 1, plan.volMbar);
 //
 template <typename T>
 __global__ void transposeTiledSingleOutRank(
   const int volMm, const int volMk, const int volMbar,
   const int sizeMm, const int sizeMbar,
   const int cMk,
-  const TensorConvInOut* __restrict__ glMbar,
-  const TensorConv* __restrict__ glMm,
+  const TensorConvInOut* RESTRICT glMbar,
+  const TensorConv* RESTRICT glMm,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. TILEDIM*volMm elements
@@ -334,9 +336,9 @@ template <typename T, int numRegStorage>
 __global__ void transposeGeneral(
   const int volMmk, const int volMbar,
   const int sizeMmk, const int sizeMbar,
-  const TensorConvInOut* __restrict__ gl_Mmk,
-  const TensorConvInOut* __restrict__ gl_Mbar,
-  const TensorConv* __restrict__ gl_Msh,
+  const TensorConvInOut* RESTRICT gl_Mmk,
+  const TensorConvInOut* RESTRICT gl_Mbar,
+  const TensorConv* RESTRICT gl_Msh,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. volMmk elements
@@ -437,8 +439,8 @@ template <typename T>
 __global__ void transposeGeneralSplitInRank(
   const int volMm, const int volMk, const int volMbar,
   const int sizeMbar, const int cMm,
-  const int* __restrict__ posMk,
-  const TensorConvInOut* __restrict__ glMbar,
+  const int* RESTRICT posMk,
+  const TensorConvInOut* RESTRICT glMbar,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. max(volMmSplit)*volMk T elements + volMk int elements
@@ -523,8 +525,8 @@ template <typename T>
 __global__ void transposeGeneralSplitOutRank(
   const int volMm, const int volMk, const int volMbar,
   const int sizeMbar, const int cMk,
-  const int* __restrict__ posMm,
-  const TensorConvInOut* __restrict__ glMbar,
+  const int* RESTRICT posMm,
+  const TensorConvInOut* RESTRICT glMbar,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   // Shared memory. max(volMkSplit)*volMm T elements + volMm int elements
@@ -611,7 +613,7 @@ __global__ void transposeTiledLeadVolSame(
   const int numMm, const int volMbar, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
   const int2 tiledVol,
-  const TensorConvInOut* __restrict__ gl_Mbar,
+  const TensorConvInOut* RESTRICT gl_Mbar,
   const T* RESTRICT dataIn, T* RESTRICT dataOut) {
 
   const int warpLane = threadIdx.x & (warpSize - 1);
