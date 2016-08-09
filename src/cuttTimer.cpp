@@ -25,7 +25,7 @@ SOFTWARE.
 
 #include "cuttTimer.h"
 #include "CudaUtils.h"
-//#include <sstream>
+#include <limits>       // std::numeric_limits
 
 Timer::Timer() {
 #ifdef USE_CUDA_EVENT_TIMER
@@ -92,21 +92,6 @@ cuttTimer::cuttTimer(int sizeofType) : sizeofType(sizeofType) {}
 //
 cuttTimer::~cuttTimer() {}
 
-// //
-// // Convert config (dim, permutation) to string
-// //
-// std::string cuttTimer::configToString(std::vector<int>& dim, std::vector<int>& permutation) {
-//   std::ostringstream oss;
-//   oss << dim.size();
-//   for (int i=0;i < dim.size();i++) {
-//     oss << " " << dim[i];
-//   }
-//   for (int i=0;i < dim.size();i++) {
-//     oss << " " << permutation[i];
-//   }
-//   return oss.str();
-// }
-
 //
 // Start timer
 //
@@ -143,6 +128,32 @@ void cuttTimer::stop() {
     stat.worstPermutation = curPermutation;
   }
   stat.maxBW = std::max(stat.maxBW, bandwidth);
+  // maxHeap <= minHeap
+  if (stat.maxHeap.size() == 0) {
+    stat.maxHeap.push(bandwidth);    
+  } else if (stat.minHeap.size() == 0) {
+    if (stat.maxHeap.top() <= bandwidth) {
+      stat.minHeap.push(bandwidth);
+    } else {
+      stat.minHeap.push(stat.maxHeap.top());
+      stat.maxHeap.pop();
+      stat.maxHeap.push(bandwidth);
+    }
+  } else {
+    if (bandwidth <= stat.maxHeap.top()) {
+      stat.maxHeap.push(bandwidth);
+    } else {
+      stat.minHeap.push(bandwidth);
+    }
+  }
+  // Balance
+  if (stat.maxHeap.size() > stat.minHeap.size() + 1) {
+    stat.minHeap.push(stat.maxHeap.top());
+    stat.maxHeap.pop();
+  } else if (stat.minHeap.size() > stat.maxHeap.size() + 1) {
+    stat.maxHeap.push(stat.minHeap.top());
+    stat.minHeap.pop();
+  }
 }
 
 //
@@ -202,10 +213,22 @@ double cuttTimer::getWorst(int rank, std::vector<int>& dim, std::vector<int>& pe
   return stat.minBW;
 }
 
-// //
-// // Returns the median bandwidth for rank
-// //
-// double cuttTimer::getMedian(int rank) {}
+//
+// Returns the median bandwidth for rank
+//
+double cuttTimer::getMedian(int rank) {
+  auto it = stats.find(rank);
+  if (it == stats.end()) return 0.0;
+  Stat& stat = it->second;
+  if (stat.minHeap.size() > stat.maxHeap.size()) {
+    return stat.minHeap.top();
+  } else if (stat.maxHeap.size() > stat.minHeap.size()) {
+    return stat.maxHeap.top();
+  } else {
+    if (stat.minHeap.size() == 0) return 0.0;
+    return 0.5*(stat.minHeap.top() + stat.maxHeap.top());
+  }
+}
 
 //
 // Returns the average bandwidth for rank

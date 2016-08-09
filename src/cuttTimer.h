@@ -37,6 +37,7 @@ SOFTWARE.
 #include <cstdlib>
 #include <unordered_map>
 #include <set>
+#include <queue>          // std::priority_queue
 
 //
 // Simple raw timer
@@ -79,6 +80,8 @@ private:
     double totBW;
     double minBW;
     double maxBW;
+    std::priority_queue<double> maxHeap;
+    std::priority_queue<double, std::vector<double>, std::greater<double> > minHeap;
     std::vector<int> worstDim;
     std::vector<int> worstPermutation;
     Stat() {
@@ -106,7 +109,7 @@ public:
   double getBest(int rank);
   double getWorst(int rank);
   double getWorst(int rank, std::vector<int>& dim, std::vector<int>& permutation);
-  // double getMedian(int rank);
+  double getMedian(int rank);
   double getAverage(int rank);
 
   double getWorst(std::vector<int>& dim, std::vector<int>& permutation);

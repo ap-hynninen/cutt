@@ -25,6 +25,7 @@ SOFTWARE.
 #include <algorithm>
 #include <queue>
 #include <unordered_set>
+#include <cmath>
 #include "CudaUtils.h"
 #include "cuttplan.h"
 #include "cuttkernel.h"

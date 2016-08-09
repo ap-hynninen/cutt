@@ -27,6 +27,7 @@ SOFTWARE.
 #include <cstring>         // strcmp
 #include <ctime>           // std::time
 #include <cmath>
+#include <cctype>
 #include "cutt.h"
 #include "CudaUtils.h"
 #include "TensorTester.h"
@@ -160,6 +161,7 @@ int main(int argc, char *argv[]) {
     goto benchOK;
   }
 
+#if 0
   if (bench3(200*MILLION)) {
     printf("bench3:\n");
     printf("rank best worst average\n");
@@ -179,19 +181,35 @@ int main(int argc, char *argv[]) {
       printf("permutation\n");
       printVec(permutation);
     }
-    // double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
-    // printf("worst of all %4.2lf rank %d\n", worstBW, worstDim.size());
-    // printf("dimensions\n");
-    // printVec(worstDim);
-    // printf("permutation\n");
-    // printVec(worstPermutation);
+  } else {
+    goto fail;
+  }
+#endif
+
+  if (bench5(200*MILLION, 15)) {
+    printf("bench5:\n");
+    printf("rank best worst average median\n");
+    for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      double worstBW = timerDouble.getWorst(*it);
+      double bestBW = timerDouble.getBest(*it);
+      double aveBW = timerDouble.getAverage(*it);
+      double medBW = timerDouble.getMedian(*it);
+      printf("%d %6.2lf %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW, medBW);
+    }
+    for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      std::vector<int> dim;
+      std::vector<int> permutation;
+      double worstBW = timerDouble.getWorst(*it, dim, permutation);
+      printf("rank %d BW %4.2lf\n", *it, worstBW);
+      printf("dimensions\n");
+      printVec(dim);
+      printf("permutation\n");
+      printVec(permutation);
+    }
   } else {
     goto fail;
   }
 
-  // if (!bench5(200*MILLION, 1)) goto fail;
-  // if (!bench5(200*MILLION, 5)) goto fail;
-  // if (!bench5(200*MILLION, 15)) goto fail;
 #if 0
   if (bench6()) {
     printf("bench6:\n");
@@ -381,12 +399,12 @@ bool bench5(int numElem, int ratio) {
     int minDim = *(std::min_element(dim.begin(), dim.end()));
     int maxDim = *(std::max_element(dim.begin(), dim.end()));
     cur_ratio = (double)maxDim/(double)minDim;
-    // printf("vol %d cur_ratio %lf | %lf\n", vol, cur_ratio, vol_re);
-    // printVec(dim);
+    printf("vol %d cur_ratio %lf | %lf\n", vol, cur_ratio, vol_re);
+    printVec(dim);
 
-    // do {
-    //   if (!bench_tensor<long long int>(dim, permutation)) return false;
-    // } while (std::next_permutation(permutation.begin(), permutation.begin() + rank));
+    do {
+      if (!bench_tensor<long long int>(dim, permutation)) return false;
+    } while (std::next_permutation(permutation.begin(), permutation.begin() + rank));
 
   }
 
