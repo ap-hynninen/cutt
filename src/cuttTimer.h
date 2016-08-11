@@ -26,14 +26,8 @@ SOFTWARE.
 #ifndef CUTTTIMER_H
 #define CUTTTIMER_H
 
-//#define USE_CUDA_EVENT_TIMER
-
 #include <vector>
-#ifdef USE_CUDA_EVENT_TIMER
-#include <cuda_runtime.h>
-#else
-#include <ctime>
-#endif
+#include <chrono>
 #include <cstdlib>
 #include <unordered_map>
 #include <set>
@@ -44,14 +38,8 @@ SOFTWARE.
 //
 class Timer {
 private:
-#ifdef USE_CUDA_EVENT_TIMER
-  cudaEvent_t tmstart, tmend;
-#else
-  struct timespec tmstart, tmend;
-#endif
+  std::chrono::high_resolution_clock::time_point tmstart, tmend;
 public:
-  Timer();
-  ~Timer();
   void start();
   void stop();
   double seconds();

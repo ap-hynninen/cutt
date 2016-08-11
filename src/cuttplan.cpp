@@ -669,14 +669,14 @@ bool createGeneralSplitOutRankPlans(const int rank, const int* dim, const int* p
 bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
-  if (!createTrivialPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createTrivialPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledLeadVolSamePlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createTiledSingleInRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createTiledSingleOutRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createTiledSingleInRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createTiledSingleOutRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledSingleRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createGeneralPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createGeneralSplitInRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createGeneralSplitOutRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createGeneralSplitInRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createGeneralSplitOutRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
 
   return true;
 }

@@ -27,59 +27,20 @@ SOFTWARE.
 #include "CudaUtils.h"
 #include <limits>       // std::numeric_limits
 
-Timer::Timer() {
-#ifdef USE_CUDA_EVENT_TIMER
-  cudaCheck(cudaEventCreate(&tmstart));
-  cudaCheck(cudaEventCreate(&tmend));
-#else
-  tmend.tv_sec = 0;
-  tmend.tv_nsec = 0;
-  tmstart.tv_sec = 0;
-  tmstart.tv_nsec = 0;
-#endif
-}
-
-Timer::~Timer() {
-#ifdef USE_CUDA_EVENT_TIMER
-  cudaCheck(cudaEventDestroy(tmstart));
-  cudaCheck(cudaEventDestroy(tmend));
-#else
-  tmend.tv_sec = 0;
-  tmend.tv_nsec = 0;
-  tmstart.tv_sec = 0;
-  tmstart.tv_nsec = 0;
-#endif
-}
-
 void Timer::start() {
-#ifdef USE_CUDA_EVENT_TIMER
-  cudaCheck(cudaEventRecord(tmstart));
-#else
-  clock_gettime(CLOCK_REALTIME, &tmstart);
-#endif
+  tmstart = std::chrono::high_resolution_clock::now();
 }
 
 void Timer::stop() {
-#ifdef USE_CUDA_EVENT_TIMER
-  cudaCheck(cudaEventRecord(tmend));
-  cudaCheck(cudaEventSynchronize(tmend));
-#else
   cudaCheck(cudaDeviceSynchronize());
-  clock_gettime(CLOCK_REALTIME, &tmend);
-#endif
+  tmend = std::chrono::high_resolution_clock::now();
 }
 
 //
 // Returns the duration of the last run in seconds
 //
 double Timer::seconds() {
-#ifdef USE_CUDA_EVENT_TIMER
-  float milliseconds;
-  cudaCheck(cudaEventElapsedTime(&milliseconds, tmstart, tmend));
-  return ((double)milliseconds)*1000.0;
-#else
-  return (double)((tmend.tv_sec+tmend.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
-#endif
+  return std::chrono::duration_cast< std::chrono::duration<double> >(tmend - tmstart).count();
 }
 
 //
