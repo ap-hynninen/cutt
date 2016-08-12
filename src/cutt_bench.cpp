@@ -247,6 +247,13 @@ int main(int argc, char *argv[]) {
   if (benchID == 7) {
     if (bench7()) {
       printf("bench7:\n");
+      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+        std::vector<double> v = timerDouble.getData(*it);
+        for (int i=0;i < v.size();i++) {
+          printf("%1.2lf ", v[i]);
+        }
+        printf("\n");
+      }
       printf("rank best worst average median\n");
       for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
         double worstBW = timerDouble.getWorst(*it);
@@ -391,7 +398,7 @@ bool bench_input(std::vector<int>& dim, std::vector<int>& permutation) {
 }
 
 //
-// Benchmark 5: All permutations for ranks 2-7
+// Benchmark 5: All permutations for ranks 2-4, limited permutations for ranks 5-7
 //
 bool bench5(int numElem, int ratio) {
 
@@ -437,9 +444,21 @@ bool bench5(int numElem, int ratio) {
     printf("vol %d cur_ratio %lf | %lf\n", vol, cur_ratio, vol_re);
     printVec(dim);
 
-    do {
-      if (!bench_tensor<long long int>(dim, permutation)) return false;
-    } while (std::next_permutation(permutation.begin(), permutation.begin() + rank));
+    if (rank <= 4) {
+      // For ranks <= 4 do all permutations
+      do {
+        do {
+          if (!bench_tensor<long long int>(dim, permutation)) return false;
+        } while (std::next_permutation(permutation.begin(), permutation.end()));
+      } while (std::next_permutation(dim.begin(), dim.end()));
+    } else {
+      // For ranks >= 5 do 5000 random permutations
+      for (int i=0;i < 5000;i++) {
+        std::random_shuffle(dim.begin(), dim.end());
+        std::random_shuffle(permutation.begin(), permutation.end());
+        if (!bench_tensor<long long int>(dim, permutation)) return false;
+      }
+    }
 
   }
 
@@ -601,6 +620,7 @@ bool bench7() {
     // Random
     for (int r=0;r < dim.size();r++) permutation[r] = r;
     for (int nsample=0;nsample < 500;nsample++) {
+      std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
       if (!bench_tensor<long long int>(dim, permutation)) return false;
     }
@@ -619,6 +639,7 @@ bool bench7() {
     // Random
     for (int r=0;r < dim.size();r++) permutation[r] = r;
     for (int nsample=0;nsample < 500;nsample++) {
+      std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
       if (!bench_tensor<long long int>(dim, permutation)) return false;
     }

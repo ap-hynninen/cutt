@@ -156,6 +156,8 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     if (!cuttKernel(*it, idata, odata)) return CUTT_INTERNAL_ERROR;
     timer.stop();
     double curTime = timer.seconds();
+    // it->print();
+    // printf("curTime %1.2lf\n", curTime*1000.0);
     times.push_back(curTime);
     if (curTime < bestTime) {
       bestTime = curTime;

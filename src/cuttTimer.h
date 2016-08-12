@@ -31,7 +31,6 @@ SOFTWARE.
 #include <cstdlib>
 #include <unordered_map>
 #include <set>
-#include <queue>          // std::priority_queue
 
 //
 // Simple raw timer
@@ -64,16 +63,13 @@ private:
   Timer timer;
 
   struct Stat {
-    int numSample;
     double totBW;
     double minBW;
     double maxBW;
-    std::priority_queue<double> maxHeap;
-    std::priority_queue<double, std::vector<double>, std::greater<double> > minHeap;
+    std::vector<double> BW;
     std::vector<int> worstDim;
     std::vector<int> worstPermutation;
     Stat() {
-      numSample = 0;
       totBW = 0.0;
       minBW = 1.0e20;
       maxBW = -1.0;
@@ -99,6 +95,7 @@ public:
   double getWorst(int rank, std::vector<int>& dim, std::vector<int>& permutation);
   double getMedian(int rank);
   double getAverage(int rank);
+  std::vector<double> getData(int rank);
 
   double getWorst(std::vector<int>& dim, std::vector<int>& permutation);
 

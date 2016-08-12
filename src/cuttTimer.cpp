@@ -25,7 +25,8 @@ SOFTWARE.
 
 #include "cuttTimer.h"
 #include "CudaUtils.h"
-#include <limits>       // std::numeric_limits
+// #include <limits>       // std::numeric_limits
+#include <algorithm>
 
 void Timer::start() {
   tmstart = std::chrono::high_resolution_clock::now();
@@ -81,7 +82,6 @@ void cuttTimer::stop() {
     it = retval.first;
   }
   Stat& stat = it->second;
-  stat.numSample++;
   stat.totBW += bandwidth;
   if (bandwidth < stat.minBW) {
     stat.minBW = bandwidth;
@@ -89,32 +89,7 @@ void cuttTimer::stop() {
     stat.worstPermutation = curPermutation;
   }
   stat.maxBW = std::max(stat.maxBW, bandwidth);
-  // maxHeap <= minHeap
-  if (stat.maxHeap.size() == 0) {
-    stat.maxHeap.push(bandwidth);    
-  } else if (stat.minHeap.size() == 0) {
-    if (stat.maxHeap.top() <= bandwidth) {
-      stat.minHeap.push(bandwidth);
-    } else {
-      stat.minHeap.push(stat.maxHeap.top());
-      stat.maxHeap.pop();
-      stat.maxHeap.push(bandwidth);
-    }
-  } else {
-    if (bandwidth <= stat.maxHeap.top()) {
-      stat.maxHeap.push(bandwidth);
-    } else {
-      stat.minHeap.push(bandwidth);
-    }
-  }
-  // Balance
-  if (stat.maxHeap.size() > stat.minHeap.size() + 1) {
-    stat.minHeap.push(stat.maxHeap.top());
-    stat.maxHeap.pop();
-  } else if (stat.minHeap.size() > stat.maxHeap.size() + 1) {
-    stat.maxHeap.push(stat.minHeap.top());
-    stat.minHeap.pop();
-  }
+  stat.BW.push_back(bandwidth);
 }
 
 //
@@ -181,14 +156,18 @@ double cuttTimer::getMedian(int rank) {
   auto it = stats.find(rank);
   if (it == stats.end()) return 0.0;
   Stat& stat = it->second;
-  if (stat.minHeap.size() > stat.maxHeap.size()) {
-    return stat.minHeap.top();
-  } else if (stat.maxHeap.size() > stat.minHeap.size()) {
-    return stat.maxHeap.top();
-  } else {
-    if (stat.minHeap.size() == 0) return 0.0;
-    return 0.5*(stat.minHeap.top() + stat.maxHeap.top());
+  if (stat.BW.size() == 0) return 0.0;
+  // Set middle element in to correct position
+  std::nth_element(stat.BW.begin(), stat.BW.begin() + stat.BW.size()/2, stat.BW.end());
+  double median = stat.BW[stat.BW.size()/2];
+  if (stat.BW.size() % 2 == 0) {
+    // For even number of elements, set middle - 1 element in to correct position
+    // and take average
+    std::nth_element(stat.BW.begin(), stat.BW.begin() + stat.BW.size()/2 - 1, stat.BW.end());
+    median += stat.BW[stat.BW.size()/2 - 1];
+    median *= 0.5;
   }
+  return median;
 }
 
 //
@@ -198,7 +177,20 @@ double cuttTimer::getAverage(int rank) {
   auto it = stats.find(rank);
   if (it == stats.end()) return 0.0;
   Stat& stat = it->second;
-  return stat.totBW/(double)stat.numSample;
+  return stat.totBW/(double)stat.BW.size();
+}
+
+//
+// Returns all data for rank
+//
+std::vector<double> cuttTimer::getData(int rank) {
+  std::vector<double> res;
+  auto it = stats.find(rank);
+  if (it != stats.end()) {
+    Stat& stat = it->second;
+    res = stat.BW;
+  }
+  return res;
 }
 
 //
