@@ -183,8 +183,8 @@ template<typename T> bool TensorTester::checkTranspose(int rank, int* dim, int* 
   //   printf("%d %d %d\n", h_tensorConv[i].c, h_tensorConv[i].d, h_tensorConv[i].ct);
   // }
 
-  clear_device_array<TensorError_t>(d_error, maxNumblock);
-  clear_device_array<int>(d_fail, 1);
+  set_device_array<TensorError_t>(d_error, 0, maxNumblock);
+  set_device_array<int>(d_fail, 0, 1);
 
   int numthread = 512;
   int numblock = min(maxNumblock, (ndata - 1)/numthread + 1 );

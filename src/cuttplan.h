@@ -30,14 +30,11 @@ SOFTWARE.
 #include <cuda.h>
 #include "cuttTypes.h"
 
-// TILEDIM = warpSize
 const int TILEDIM = 32;
 const int TILEROWS = 8;
 
 // Transposing methods
-enum {Unknown, Trivial, General,
-  GeneralSplitInRank, GeneralSplitOutRank,
-  TiledSingleInRank, TiledSingleOutRank,
+enum {Unknown, Trivial, General, GeneralSplit,
   TiledSingleRank, TiledLeadVolSame,
   NumTransposeMethods};
 
@@ -64,12 +61,21 @@ public:
   int sizeMkBar;
   int volMkBar;
 
+  int volMmBar;
+
   // Remaining volume
   int sizeMbar;
   int volMbar;
 
   // Number of splits, for GeneralSplitInRank and GeneralSplitOutRank methods
   int numSplit;
+
+  // Rank that is split
+  int splitRank;
+  int splitDim;
+
+  // volMmk that is left unsplit
+  int volMmkUnsplit;
 
   TensorSplit();
 
@@ -132,12 +138,14 @@ public:
 
   int2 tiledVol;
 
-  // Estimate of the number of global memory accesses
-  unsigned long long int numRead;
-  unsigned long long int numWrite;
-  unsigned long long int numMemAccess;
-
-  float numTransPerAccess;
+  // Number of iterations of the kernel
+  int num_iter;
+  // Average memory level parallelism = average unroll count
+  float mlp;
+  int gld_req, gst_req, gld_tran, gst_tran;
+  int cl_full, cl_part;
+  int sld_req, sst_req, sld_tran, sst_tran;
+  double cycles;
 
   //--------------
   // Host buffers
@@ -145,10 +153,6 @@ public:
   std::vector<TensorConvInOut> hostMbar;
   std::vector<TensorConvInOut> hostMmk;
   std::vector<TensorConv> hostMsh;
-  std::vector<TensorConv> hostMm;
-  std::vector<TensorConv> hostMk;
-  std::vector<int> hostPosMk;
-  std::vector<int> hostPosMm;
 
   //----------------
   // Device buffers
@@ -168,12 +172,6 @@ public:
   // For TiledSingleOutRank
   TensorConv* Mm;
 
-  // For GeneralSplitInRank
-  int* posMk;
-
-  // For GeneralSplitOutRank
-  int* posMm;
-
   cuttPlan_t();
   ~cuttPlan_t();
   void print();
@@ -185,10 +183,15 @@ public:
 private:
 };
 
-#if 0
+// void findMispredictionBest(std::list<cuttPlan_t>& plans, std::vector<double>& times,
+//   std::list<cuttPlan_t>::iterator bestPlan, double bestTime);
+
+// void findMispredictionBest(std::list<cuttPlan_t>::iterator bestPlan, std::vector<double>& times, double bestTime);
+
+void printMatlab(std::list<cuttPlan_t>& plans, std::vector<double>& times);
+
 void reduceRanks(const int rank, const int* dim, const int* permutation,
   std::vector<int>& redDim, std::vector<int>& redPermutation);
-#endif
 
 bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);

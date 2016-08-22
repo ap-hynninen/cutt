@@ -41,17 +41,17 @@ SOFTWARE.
   }                                                  \
 } while(0)
 
-void clear_device_array_async_T(void *data, const int ndata, cudaStream_t stream, const size_t sizeofT);
-void clear_device_array_T(void *data, const int ndata, const size_t sizeofT);
+void set_device_array_async_T(void *data, int value, const int ndata, cudaStream_t stream, const size_t sizeofT);
+void set_device_array_T(void *data, int value, const int ndata, const size_t sizeofT);
 
 template <class T>
-void clear_device_array(T *data, const int ndata, cudaStream_t stream=0) {
-  clear_device_array_async_T(data, ndata, stream, sizeof(T));
+void set_device_array(T *data, int value, const int ndata, cudaStream_t stream=0) {
+  set_device_array_async_T(data, value, ndata, stream, sizeof(T));
 }
 
 template <class T>
-void clear_device_array_sync(T *data, const int ndata) {
-  clear_device_array_T(data, ndata, sizeof(T));
+void set_device_array_sync(T *data, int value, const int ndata) {
+  set_device_array_T(data, value, ndata, sizeof(T));
 }
 
 void allocate_device_T(void **pp, const int len, const size_t sizeofT);

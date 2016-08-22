@@ -92,6 +92,7 @@ Here is an example code.
 int main() {
 
   // Four dimensional tensor
+  // Transpose (31, 549, 2, 3) -> (3, 31, 2, 549)
   int dim[4] = {31, 549, 2, 3};
   int permutation[4] = {3, 0, 2, 1};
 

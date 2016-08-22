@@ -28,12 +28,12 @@ SOFTWARE.
 
 //----------------------------------------------------------------------------------------
 
-void clear_device_array_async_T(void *data, const int ndata, cudaStream_t stream, const size_t sizeofT) {
-  cudaCheck(cudaMemsetAsync(data, 0, sizeofT*ndata, stream));
+void set_device_array_async_T(void *data, int value, const int ndata, cudaStream_t stream, const size_t sizeofT) {
+  cudaCheck(cudaMemsetAsync(data, value, sizeofT*ndata, stream));
 }
 
-void clear_device_array_T(void *data, const int ndata, const size_t sizeofT) {
-  cudaCheck(cudaMemset(data, 0, sizeofT*ndata));
+void set_device_array_T(void *data, int value, const int ndata, const size_t sizeofT) {
+  cudaCheck(cudaMemset(data, value, sizeofT*ndata));
 }
 
 //----------------------------------------------------------------------------------------

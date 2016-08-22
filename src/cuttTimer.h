@@ -31,14 +31,30 @@ SOFTWARE.
 #include <cstdlib>
 #include <unordered_map>
 #include <set>
+// -------------------------------------------------
+// By default uses CUDA event timer. Comment out
+// this line if you want to use the wallclock 
+#define CUDA_EVENT_TIMER
+// -------------------------------------------------
+#ifdef CUDA_EVENT_TIMER
+#include <cuda_runtime.h>
+#endif
 
 //
 // Simple raw timer
 //
 class Timer {
 private:
+#ifdef CUDA_EVENT_TIMER
+  cudaEvent_t tmstart, tmend;
+#else
   std::chrono::high_resolution_clock::time_point tmstart, tmend;
+#endif
 public:
+#ifdef CUDA_EVENT_TIMER
+  Timer();
+  ~Timer();
+#endif
   void start();
   void stop();
   double seconds();

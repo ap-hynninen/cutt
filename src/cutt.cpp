@@ -86,9 +86,19 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
+  // Reduce ranks
+  std::vector<int> redDim;
+  std::vector<int> redPermutation;
+  reduceRanks(rank, dim, permutation, redDim, redPermutation);
+
+  // Create plans from reduced ranks
   std::list<cuttPlan_t> plans;
-  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans))
-    return CUTT_INTERNAL_ERROR;
+  if (rank != redDim.size()) {
+    if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  }
+
+  // Create plans from non-reduced ranks
+  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 
   // Choose the plan
   std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
@@ -133,14 +143,25 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
 
-  std::list<cuttPlan_t> plans;
-  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
-
   // Set shared memory configuration if necessary
   if (!devicesReady.count(deviceID)) {
     cuttKernelSetSharedMemConfig();
     devicesReady.insert(deviceID);
   }
+
+  // Reduce ranks
+  std::vector<int> redDim;
+  std::vector<int> redPermutation;
+  reduceRanks(rank, dim, permutation, redDim, redPermutation);
+
+  // Create plans from reduced ranks
+  std::list<cuttPlan_t> plans;
+  if (rank != redDim.size()) {
+    if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  }
+
+  // Create plans from non-reduced ranks
+  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 
   // Choose the plan
   double bestTime = 1.0e40;
@@ -166,6 +187,9 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   }
   if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
 
+  printMatlab(plans, times);
+  // findMispredictionBest(plans, times, bestPlan, bestTime);
+  // bestPlan->print();
 
   // Create copy of the plan outside the list
   cuttPlan_t* plan = new cuttPlan_t();

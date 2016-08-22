@@ -53,8 +53,8 @@ long long int* dataOut = NULL;
 int dataSize  = 330*MILLION;
 TensorTester* tester = NULL;
 
-cuttTimer timerFloat(4);
-cuttTimer timerDouble(8);
+cuttTimer* timerFloat;
+cuttTimer* timerDouble;
 bool use_cuttPlanMeasure;
 
 bool bench1(int numElem);
@@ -67,6 +67,7 @@ bool bench7();
 bool bench_input(std::vector<int>& dim, std::vector<int>& permutation);
 bool bench_memcpy(int numElem);
 
+bool isTrivial(std::vector<int>& permutation);
 void getRandomDim(double vol, std::vector<int>& dim);
 template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation);
 void printVec(std::vector<int>& vec);
@@ -137,6 +138,9 @@ int main(int argc, char *argv[]) {
   cudaCheck(cudaDeviceReset());
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
+  timerFloat = new cuttTimer(4);
+  timerDouble = new cuttTimer(8);
+
   // Allocate device data, 100M elements
   allocate_device<long long int>(&dataIn, dataSize);
   allocate_device<long long int>(&dataOut, dataSize);
@@ -171,17 +175,17 @@ int main(int argc, char *argv[]) {
     if (bench3(200*MILLION)) {
       printf("bench3:\n");
       printf("rank best worst average median\n");
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
-        double worstBW = timerDouble.getWorst(*it);
-        double bestBW = timerDouble.getBest(*it);
-        double aveBW = timerDouble.getAverage(*it);
-        double medBW = timerDouble.getMedian(*it);
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        double worstBW = timerDouble->getWorst(*it);
+        double bestBW = timerDouble->getBest(*it);
+        double aveBW = timerDouble->getAverage(*it);
+        double medBW = timerDouble->getMedian(*it);
         printf("%d %6.2lf %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW, medBW);
       }
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
         std::vector<int> dim;
         std::vector<int> permutation;
-        double worstBW = timerDouble.getWorst(*it, dim, permutation);
+        double worstBW = timerDouble->getWorst(*it, dim, permutation);
         printf("rank %d BW %4.2lf\n", *it, worstBW);
         printf("dimensions\n");
         printVec(dim);
@@ -196,18 +200,26 @@ int main(int argc, char *argv[]) {
   if (benchID/100 == 5) {
     if (bench5(200*MILLION, benchID % 100)) {
       printf("bench5:\n");
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        std::vector<double> v = timerDouble->getData(*it);
+        printf("RANK%d", *it);
+        for (int i=0;i < v.size();i++) {
+          printf(" %1.2lf", v[i]);
+        }
+        printf("\n");
+      }
       printf("rank best worst average median\n");
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
-        double worstBW = timerDouble.getWorst(*it);
-        double bestBW = timerDouble.getBest(*it);
-        double aveBW = timerDouble.getAverage(*it);
-        double medBW = timerDouble.getMedian(*it);
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        double worstBW = timerDouble->getWorst(*it);
+        double bestBW = timerDouble->getBest(*it);
+        double aveBW = timerDouble->getAverage(*it);
+        double medBW = timerDouble->getMedian(*it);
         printf("%d %6.2lf %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW, medBW);
       }
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
         std::vector<int> dim;
         std::vector<int> permutation;
-        double worstBW = timerDouble.getWorst(*it, dim, permutation);
+        double worstBW = timerDouble->getWorst(*it, dim, permutation);
         printf("rank %d BW %4.2lf\n", *it, worstBW);
         printf("dimensions\n");
         printVec(dim);
@@ -222,17 +234,25 @@ int main(int argc, char *argv[]) {
   if (benchID == 6) {
     if (bench6()) {
       printf("bench6:\n");
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        std::vector<double> v = timerDouble->getData(*it);
+        printf("RANK%d", *it);
+        for (int i=0;i < v.size();i++) {
+          printf(" %1.2lf", v[i]);
+        }
+        printf("\n");
+      }
       printf("rank best worst average\n");
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
-        double worstBW = timerDouble.getWorst(*it);
-        double bestBW = timerDouble.getBest(*it);
-        double aveBW = timerDouble.getAverage(*it);
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        double worstBW = timerDouble->getWorst(*it);
+        double bestBW = timerDouble->getBest(*it);
+        double aveBW = timerDouble->getAverage(*it);
         printf("%d %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW);
       }
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
         std::vector<int> dim;
         std::vector<int> permutation;
-        double worstBW = timerDouble.getWorst(*it, dim, permutation);
+        double worstBW = timerDouble->getWorst(*it, dim, permutation);
         printf("rank %d BW %4.2lf\n", *it, worstBW);
         printf("dimensions\n");
         printVec(dim);
@@ -247,25 +267,26 @@ int main(int argc, char *argv[]) {
   if (benchID == 7) {
     if (bench7()) {
       printf("bench7:\n");
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
-        std::vector<double> v = timerDouble.getData(*it);
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        std::vector<double> v = timerDouble->getData(*it);
+        printf("RANK%d", *it);
         for (int i=0;i < v.size();i++) {
-          printf("%1.2lf ", v[i]);
+          printf(" %1.2lf", v[i]);
         }
         printf("\n");
       }
       printf("rank best worst average median\n");
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
-        double worstBW = timerDouble.getWorst(*it);
-        double bestBW = timerDouble.getBest(*it);
-        double aveBW = timerDouble.getAverage(*it);
-        double medBW = timerDouble.getMedian(*it);
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
+        double worstBW = timerDouble->getWorst(*it);
+        double bestBW = timerDouble->getBest(*it);
+        double aveBW = timerDouble->getAverage(*it);
+        double medBW = timerDouble->getMedian(*it);
         printf("%d %6.2lf %6.2lf %6.2lf %6.2lf\n", *it, bestBW, worstBW, aveBW, medBW);
       }
-      for (auto it=timerDouble.ranksBegin();it != timerDouble.ranksEnd();it++) {
+      for (auto it=timerDouble->ranksBegin();it != timerDouble->ranksEnd();it++) {
         std::vector<int> dim;
         std::vector<int> permutation;
-        double worstBW = timerDouble.getWorst(*it, dim, permutation);
+        double worstBW = timerDouble->getWorst(*it, dim, permutation);
         printf("rank %d BW %4.2lf\n", *it, worstBW);
         printf("dimensions\n");
         printVec(dim);
@@ -291,6 +312,9 @@ end:
   delete tester;
 
   printf("seed %u\n", seed);
+
+  delete timerFloat;
+  delete timerDouble;
 
   cudaCheck(cudaDeviceReset());
   return 0;
@@ -393,7 +417,7 @@ bool bench_input(std::vector<int>& dim, std::vector<int>& permutation) {
   printVec(dim);
   printf("permutation\n");
   printVec(permutation);
-  printf("bandwidth %4.2lf GB/s\n", timerDouble.GBs());
+  printf("bandwidth %4.2lf GB/s\n", timerDouble->GBs());
   return true;  
 }
 
@@ -448,7 +472,9 @@ bool bench5(int numElem, int ratio) {
       // For ranks <= 4 do all permutations
       do {
         do {
-          if (!bench_tensor<long long int>(dim, permutation)) return false;
+          if (!isTrivial(permutation)) {
+            if (!bench_tensor<long long int>(dim, permutation)) return false;
+          }
         } while (std::next_permutation(permutation.begin(), permutation.end()));
       } while (std::next_permutation(dim.begin(), dim.end()));
     } else {
@@ -456,7 +482,9 @@ bool bench5(int numElem, int ratio) {
       for (int i=0;i < 5000;i++) {
         std::random_shuffle(dim.begin(), dim.end());
         std::random_shuffle(permutation.begin(), permutation.end());
-        if (!bench_tensor<long long int>(dim, permutation)) return false;
+        if (!isTrivial(permutation)) {
+          if (!bench_tensor<long long int>(dim, permutation)) return false;
+        }
       }
     }
 
@@ -596,7 +624,7 @@ bool bench6() {
     printVec(dims[i]);
     printf("permutation\n");
     printVec(permutations[i]);
-    printf("bandwidth %4.2lf GiB/s\n", timerDouble.GiBs());
+    printf("bandwidth %4.2lf GiB/s\n", timerDouble->GiBs());
   }
 
   return true;
@@ -611,9 +639,6 @@ bool bench7() {
   {
     std::vector<int> dim = {5, 3, 2, 4, 35, 33, 37, 40};
     std::vector<int> permutation(8);
-    // Trivial
-    for (int r=0;r < dim.size();r++) permutation[r] = r;
-    if (!bench_tensor<long long int>(dim, permutation)) return false;
     // Inverse
     for (int r=0;r < dim.size();r++) permutation[r] = dim.size() - 1 - r;
     if (!bench_tensor<long long int>(dim, permutation)) return false;
@@ -622,7 +647,9 @@ bool bench7() {
     for (int nsample=0;nsample < 500;nsample++) {
       std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
-      if (!bench_tensor<long long int>(dim, permutation)) return false;
+      if (!isTrivial(permutation)) {
+        if (!bench_tensor<long long int>(dim, permutation)) return false;
+      }
     }
   }
 
@@ -630,9 +657,6 @@ bool bench7() {
   {
     std::vector<int> dim = {2, 3, 4, 3, 2, 2, 3, 2, 20, 18, 22, 24};
     std::vector<int> permutation(12);
-    // Trivial
-    for (int r=0;r < dim.size();r++) permutation[r] = r;
-    if (!bench_tensor<long long int>(dim, permutation)) return false;
     // Inverse
     for (int r=0;r < dim.size();r++) permutation[r] = dim.size() - 1 - r;
     if (!bench_tensor<long long int>(dim, permutation)) return false;
@@ -641,10 +665,22 @@ bool bench7() {
     for (int nsample=0;nsample < 500;nsample++) {
       std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
-      if (!bench_tensor<long long int>(dim, permutation)) return false;
+      if (!isTrivial(permutation)) {
+        if (!bench_tensor<long long int>(dim, permutation)) return false;
+      }
     }
   }
 
+  return true;
+}
+
+//
+// Returns true for trivial permutation
+//
+bool isTrivial(std::vector<int>& permutation) {
+  for (int i=0;i < permutation.size();i++) {
+    if (permutation[i] != i) return false;
+  }
   return true;
 }
 
@@ -697,9 +733,15 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
     return false;
   }
 
+  std::vector<int> dimp(rank);
+  for (int r=0;r < rank;r++) {
+    dimp[r] = dim[permutation[r]];
+  }
+
   printf("number of elements %d\n", vol);
   printf("dimensions\n");
   printVec(dim);
+  printVec(dimp);
   printf("permutation\n");
   printVec(permutation);
 
@@ -712,13 +754,13 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   cuttTimer* timer;
   if (sizeof(T) == 4) {
-    timer = &timerFloat;
+    timer = timerFloat;
   } else {
-    timer = &timerDouble;
+    timer = timerDouble;
   }
 
   for (int i=0;i < 4;i++) {
-    clear_device_array<T>((T *)dataOut, vol);
+    set_device_array<T>((T *)dataOut, -1, vol);
     cudaCheck(cudaDeviceSynchronize());
 
     timer->start(dim, permutation);
@@ -750,7 +792,7 @@ bool bench_memcpy(int numElem) {
   {
     cuttTimer timer(8);
     for (int i=0;i < 4;i++) {
-      clear_device_array<double>((double *)dataOut, numElem);
+      set_device_array<double>((double *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       scalarCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
@@ -764,7 +806,7 @@ bool bench_memcpy(int numElem) {
   {
     cuttTimer timer(8);
     for (int i=0;i < 4;i++) {
-      clear_device_array<double>((double *)dataOut, numElem);
+      set_device_array<double>((double *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       vectorCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
@@ -778,7 +820,7 @@ bool bench_memcpy(int numElem) {
   {
     cuttTimer timer(8);
     for (int i=0;i < 4;i++) {
-      clear_device_array<double>((double *)dataOut, numElem);
+      set_device_array<double>((double *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
       memcpyFloat(numElem*2, (float *)dataIn, (float *)dataOut, 0);

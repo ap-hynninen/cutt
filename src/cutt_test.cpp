@@ -43,13 +43,13 @@ SOFTWARE.
   }                                                  \
 } while(0)
 
+cuttTimer* timerFloat;
+cuttTimer* timerDouble;
+
 long long int* dataIn  = NULL;
 long long int* dataOut = NULL;
 int dataSize  = 200000000;
 TensorTester* tester = NULL;
-
-cuttTimer timerFloat(4);
-cuttTimer timerDouble(8);
 
 bool test1();
 bool test2();
@@ -86,6 +86,9 @@ int main(int argc, char *argv[]) {
   cudaCheck(cudaDeviceReset());
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
+  timerFloat = new cuttTimer(4);
+  timerDouble = new cuttTimer(8);
+
   // Allocate device data, 100M elements
   allocate_device<long long int>(&dataIn, dataSize);
   allocate_device<long long int>(&dataOut, dataSize);
@@ -102,7 +105,7 @@ int main(int argc, char *argv[]) {
   {
     std::vector<int> worstDim;
     std::vector<int> worstPermutation;
-    double worstBW = timerDouble.getWorst(worstDim, worstPermutation);
+    double worstBW = timerDouble->getWorst(worstDim, worstPermutation);
     printf("worstBW %4.2lf GB/s\n", worstBW);
     printf("dim\n");
     printVec(worstDim);
@@ -118,6 +121,9 @@ end:
   deallocate_device<long long int>(&dataIn);
   deallocate_device<long long int>(&dataOut);
   delete tester;
+
+  delete timerFloat;
+  delete timerDouble;
 
   cudaCheck(cudaDeviceReset());
   return 0;
@@ -419,14 +425,14 @@ bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
 
   cuttTimer* timer;
   if (sizeof(T) == 4) {
-    timer = &timerFloat;
+    timer = timerFloat;
   } else {
-    timer = &timerDouble;
+    timer = timerDouble;
   }
 
   cuttHandle plan;
   cuttCheck(cuttPlan(&plan, rank, dim.data(), permutation.data(), sizeof(T), 0));
-  clear_device_array<T>((T *)dataOut, vol);
+  set_device_array<T>((T *)dataOut, -1, vol);
   cudaCheck(cudaDeviceSynchronize());
 
   if (vol > 1000000) timer->start(dim, permutation);

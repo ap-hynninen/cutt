@@ -27,21 +27,50 @@ SOFTWARE.
 #include "CudaUtils.h"
 // #include <limits>       // std::numeric_limits
 #include <algorithm>
+#ifdef CUDA_EVENT_TIMER
+#include "CudaUtils.h"
+#endif
+
+#ifdef CUDA_EVENT_TIMER
+Timer::Timer() {
+  cudaCheck(cudaEventCreate(&tmstart));
+  cudaCheck(cudaEventCreate(&tmend));
+}
+Timer::~Timer() {
+  cudaCheck(cudaEventDestroy(tmstart));
+  cudaCheck(cudaEventDestroy(tmend));
+}
+#endif
 
 void Timer::start() {
+#ifdef CUDA_EVENT_TIMER
+  cudaCheck(cudaEventRecord(tmstart, 0));
+#else
   tmstart = std::chrono::high_resolution_clock::now();
+#endif
 }
 
 void Timer::stop() {
+#ifdef CUDA_EVENT_TIMER
+  cudaCheck(cudaEventRecord(tmend, 0));
+  cudaCheck(cudaEventSynchronize(tmend));
+#else
   cudaCheck(cudaDeviceSynchronize());
   tmend = std::chrono::high_resolution_clock::now();
+#endif
 }
 
 //
 // Returns the duration of the last run in seconds
 //
 double Timer::seconds() {
+#ifdef CUDA_EVENT_TIMER
+  float ms;
+  cudaCheck(cudaEventElapsedTime(&ms, tmstart, tmend));
+  return (double)(ms/1000.0f);
+#else
   return std::chrono::duration_cast< std::chrono::duration<double> >(tmend - tmstart).count();
+#endif
 }
 
 //
