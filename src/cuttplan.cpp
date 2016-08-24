@@ -1080,6 +1080,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
       // Number of splits that are "round down"
       int num0 = tensorSplit.numSplit - num1;
       int volMmk0 = dimSplit[tensorSplit.splitRank]*tensorSplit.volMmkUnsplit;
+      // mlp = (float)(volMmk0*num0 + volMmk1*num1) / (float)(launchConfig.numthread.x*(num0 + num1));
       // Global memory
       gld_tran = 0;
       gst_tran = 0;
@@ -1213,6 +1214,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
 
     num_iter = tensorSplit.volMbar;
     mlp = (float)launchConfig.numRegStorage;
+    // mlp = (float)tensorSplit.volMmk / (float)launchConfig.numthread.x;
 
     // Memory access
     {

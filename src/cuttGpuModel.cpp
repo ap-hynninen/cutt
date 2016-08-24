@@ -347,6 +347,7 @@ void countTiledGlTransactions(const int numPosMbarSample, const int volMm, const
   gst_req = gld_req;
 }
 
+/*
 void prepmodel3(cudaDeviceProp& prop, 
   int nthread, int numActiveBlock, float mlp, int insts, int req, int tran,
   int sh_req, int sh_tran, double cl, double& delta_ll, double& mem_cycles, double& MWP) {
@@ -391,6 +392,50 @@ void prepmodel3(cudaDeviceProp& prop,
   MWP = mem_l / delta_l;
   MWP = std::min(MWP*mlp, std::min(MWP_peak_BW, (double)active_warps_per_SM));
 }
+*/
+
+void prepmodel4(cudaDeviceProp& prop, 
+  int nthread, int numActiveBlock, float mlp, int insts, int req, int tran,
+  int sh_req, int sh_tran, double cl,
+  double& delta_ll, double& mem_cycles, double& sh_mem_cycles, double& MWP) {
+
+  double active_SM = prop.multiProcessorCount;
+  // Memory bandwidth in GB/s
+  double mem_BW = (double)(prop.memoryClockRate*2*(prop.memoryBusWidth/8))/1.0e6;
+  if (prop.ECCEnabled) mem_BW *= (1.0 - 0.125);
+  // GPU clock in GHz
+  double freq = (double)prop.clockRate/1.0e6;
+  int warpSize = prop.warpSize;
+  // printf("active_SM %1.1lf mem_BW %1.2lf freq %1.4lf\n", active_SM, mem_BW, freq);
+  // Delays & latencies in cycles
+  double base_dep_delay = 10.0;
+  double base_mem_latency = 560.0;
+  double sh_mem_latency = 1.0;
+
+  int active_warps_per_SM = nthread*numActiveBlock/warpSize;
+
+  // avg. number of memory transactions per memory request
+  double num_trans_per_request = (double)tran / (double)req;
+
+  double sh_num_trans_per_request = (double)sh_tran / (double)sh_req;
+
+  double mem_l = (1.0 + cl)*base_mem_latency + (num_trans_per_request - 1.0) * base_dep_delay;
+
+  // Avg. number of memory cycles per warp per iteration
+  mem_cycles = mem_l * insts;
+  sh_mem_cycles = sh_num_trans_per_request * sh_mem_latency * insts;
+
+  // The final value of departure delay
+  double delta_l = num_trans_per_request * base_dep_delay;
+
+  double bytes_per_request = num_trans_per_request*128;
+
+  delta_ll = base_dep_delay;
+  double BW_per_warp = freq*bytes_per_request/mem_l;
+  double MWP_peak_BW = mem_BW/(BW_per_warp*active_SM);
+  MWP = mem_l / delta_l;
+  MWP = std::min(MWP*mlp, std::min(MWP_peak_BW, (double)active_warps_per_SM));
+}
 
 double cyclesGeneral(cudaDeviceProp& prop, int nthread, int numActiveBlock, int numRegStorage, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
@@ -398,17 +443,26 @@ double cyclesGeneral(cudaDeviceProp& prop, int nthread, int numActiveBlock, int 
 
   int warps_per_block = nthread/32;
 
-  double delta_ll, mem_cycles, MWP;
+  // double delta_ll, mem_cycles, MWP;
+  // prepmodel3(prop, nthread, numActiveBlock, (float)numRegStorage, numRegStorage,
+  //   gld_req + gst_req, gld_tran + gst_tran,
+  //   sld_req + sst_req, sld_tran + sst_tran, cl,
+  //   delta_ll, mem_cycles, MWP);
+  // double iter_cycles = 10.0*num_iter;
+  // double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
+  // double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
+  // double cycles = ldst_cycles + sync_cycles + iter_cycles;
 
-  prepmodel3(prop, nthread, numActiveBlock, (float)numRegStorage, numRegStorage,
+  double delta_ll, mem_cycles, sh_mem_cycles, MWP;
+
+  prepmodel4(prop, nthread, numActiveBlock, (float)numRegStorage, numRegStorage,
     gld_req + gst_req, gld_tran + gst_tran,
     sld_req + sst_req, sld_tran + sst_tran, cl,
-    delta_ll, mem_cycles, MWP);
-
-  double iter_cycles = 10.0*num_iter;
-  double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
-  double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
-  double cycles = ldst_cycles + sync_cycles + iter_cycles;
+    delta_ll, mem_cycles, sh_mem_cycles, MWP);
+  double ldst_cycles = 2.0*mem_cycles*warps_per_block/MWP;
+  double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
+  double iter_cycles = 20.0;
+  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
 
   return cycles;
 }
@@ -419,17 +473,25 @@ double cyclesTiled(cudaDeviceProp& prop, int nthread, int numActiveBlock, float 
 
   int warps_per_block = nthread/32;
 
-  double delta_ll, mem_cycles, MWP;
+  // double delta_ll, mem_cycles, MWP;
+  // prepmodel3(prop, nthread, numActiveBlock, mlp, TILEDIM/TILEROWS,
+  //   gld_req + gst_req, gld_tran + gst_tran,
+  //   sld_req + sst_req, sld_tran + sst_tran, cl,
+  //   delta_ll, mem_cycles, MWP);
+  // double iter_cycles = 10.0*num_iter;
+  // double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
+  // double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
+  // double cycles = ldst_cycles + sync_cycles + iter_cycles;
 
-  prepmodel3(prop, nthread, numActiveBlock, mlp, TILEDIM/TILEROWS,
+  double delta_ll, mem_cycles, sh_mem_cycles, MWP;
+  prepmodel4(prop, nthread, numActiveBlock, mlp, mlp,
     gld_req + gst_req, gld_tran + gst_tran,
     sld_req + sst_req, sld_tran + sst_tran, cl,
-    delta_ll, mem_cycles, MWP);
-
-  double iter_cycles = 10.0*num_iter;
-  double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
-  double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
-  double cycles = ldst_cycles + sync_cycles + iter_cycles;
+    delta_ll, mem_cycles, sh_mem_cycles, MWP);
+  double ldst_cycles = 2.0*mem_cycles*warps_per_block/MWP;
+  double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
+  double iter_cycles = 20.0;
+  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
 
   return cycles;
 }

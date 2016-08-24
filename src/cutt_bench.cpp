@@ -844,6 +844,6 @@ void printDeviceInfo() {
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
   double mem_BW = (double)(prop.memoryClockRate*2*(prop.memoryBusWidth/8))/1.0e6;
   printf("Using %s SM version %d.%d\n", prop.name, prop.major, prop.minor);
-  printf("Clock %1.3lfGhz numSM %d ECC %d l2CacheSize %dB mem BW %1.2lfGB/s\n", (double)prop.clockRate/1e6,
-    prop.multiProcessorCount, prop.ECCEnabled, prop.l2CacheSize, mem_BW);
+  printf("Clock %1.3lfGhz numSM %d ECC %d mem BW %1.2lfGB/s\n", (double)prop.clockRate/1e6,
+    prop.multiProcessorCount, prop.ECCEnabled, mem_BW);
 }
