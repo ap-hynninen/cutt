@@ -71,6 +71,7 @@ bool isTrivial(std::vector<int>& permutation);
 void getRandomDim(double vol, std::vector<int>& dim);
 template <typename T> bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation);
 void printVec(std::vector<int>& vec);
+void printDeviceInfo();
 
 int main(int argc, char *argv[]) {
 
@@ -137,6 +138,8 @@ int main(int argc, char *argv[]) {
 
   cudaCheck(cudaDeviceReset());
   cudaCheck(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+
+  printDeviceInfo();
 
   timerFloat = new cuttTimer(4);
   timerDouble = new cuttTimer(8);
@@ -834,3 +837,13 @@ bool bench_memcpy(int numElem) {
   return true;
 }
 
+void printDeviceInfo() {
+  int deviceID;
+  cudaCheck(cudaGetDevice(&deviceID));
+  cudaDeviceProp prop;
+  cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+  double mem_BW = (double)(prop.memoryClockRate*2*(prop.memoryBusWidth/8))/1.0e6;
+  printf("Using %s SM version %d.%d\n", prop.name, prop.major, prop.minor);
+  printf("Clock %1.3lfGhz numSM %d ECC %d l2CacheSize %dB mem BW %1.2lfGB/s\n", (double)prop.clockRate/1e6,
+    prop.multiProcessorCount, prop.ECCEnabled, prop.l2CacheSize, mem_BW);
+}
