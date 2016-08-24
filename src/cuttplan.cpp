@@ -178,6 +178,8 @@ TensorSplit::TensorSplit() {
   volMkBar = 0;
   sizeMbar = 0;
   volMbar = 0;
+  volMmkInCont = 0;
+  volMmkOutCont = 0;
   numSplit = 1;
   splitRank = -1;
   splitDim = 0;
@@ -187,8 +189,9 @@ TensorSplit::TensorSplit() {
 void TensorSplit::print() {
   printf("sizeMm %d sizeMk %d sizeMmk %d sizeMbar %d sizeMkBar %d\n",
     sizeMm, sizeMk, sizeMmk, sizeMbar, sizeMkBar);
-  printf("volMm %d volMk %d volMmk %d volMbar %d volMkBar %d volMmBar %d\n",
-    volMm, volMk, volMmk, volMbar, volMkBar, volMmBar);
+  printf("volMm %d volMk %d volMmk %d volMbar %d volMkBar %d\n",
+    volMm, volMk, volMmk, volMbar, volMkBar);
+  printf("volMmkInCont %d volMmkOutCont %d\n", volMmkInCont, volMmkOutCont);
   if (method == GeneralSplit) printf("numSplit %d splitRank %d\n", numSplit, splitRank);
 }
 
@@ -229,42 +232,100 @@ void TensorSplit::update(const int sizeMm_in, const int sizeMk_in, const int ran
     vol *= dim[i];
   }
 
+  sizeMbar = rank - sizeMmk;
+  volMbar = vol/volMmk;
+
   if (splitRank >= 0) {
     splitDim = dim[splitRank];
     volMmkUnsplit = volMmk / splitDim;
   }
 
-  volMmBar = volMmk / volMk;
-  sizeMbar = rank - sizeMmk;
-  volMbar = vol/volMmk;
+  std::vector<bool> isMmk(rank, false);
+  for (int i=0;i < rank;i++) {
+    if (i < sizeMm) {
+      isMmk[i] = true;
+    }
+    if (i < sizeMk) {
+      int pi = permutation[i];
+      isMmk[pi] = true;
+    }
+  }
+
+  volMmkInCont = 1;
+  for (int i=0;i < rank;i++) {
+    if (!isMmk[i]) break;
+    if (i == splitRank) {
+      volMmkInCont *= splitDim / numSplit + (splitDim % numSplit > 0);
+      break;
+    } else {
+      volMmkInCont *= dim[i];
+    }
+  }
+
+  volMmkOutCont = 1;
+  for (int i=0;i < rank;i++) {
+    int pi = permutation[i];
+    if (!isMmk[pi]) break;
+    if (pi == splitRank) {
+      volMmkOutCont *= splitDim / numSplit + (splitDim % numSplit > 0);
+      break;
+    } else {
+      volMmkOutCont *= dim[pi];
+    }
+  }
+
 }
 
 bool operator==(const TensorSplit& lhs, const TensorSplit& rhs) {
   if (lhs.method != rhs.method) return false;
 
+  if (lhs.method == Trivial) return true;
+
+  if (lhs.method == TiledSingleRank) {
+    return
+    (lhs.volMm == rhs.volMm) &&
+    (lhs.volMk == rhs.volMk) &&
+    (lhs.volMbar == rhs.volMbar);
+  }
+
+  if (lhs.method == TiledLeadVolSame) {
+    return
+    (lhs.volMm == rhs.volMm) &&
+    (lhs.volMkBar == rhs.volMkBar) &&
+    (lhs.volMbar == rhs.volMbar);
+  }
+
   if (lhs.method == General || lhs.method == GeneralSplit) {
     return
-    (lhs.sizeMmk == rhs.sizeMmk) &&
+    (lhs.volMmkInCont == rhs.volMmkInCont) &&
+    (lhs.volMmkOutCont == rhs.volMmkOutCont) &&
     (lhs.volMmk == rhs.volMmk) &&
-    (lhs.sizeMbar == rhs.sizeMbar) &&
-    (lhs.volMbar == rhs.volMbar) &&
-    // (lhs.numActiveBlock == rhs.numActiveBlock) &&
-    (lhs.numSplit == rhs.numSplit);
-  } else {
-    return
-    (lhs.sizeMm == rhs.sizeMm) &&
-    (lhs.volMm == rhs.volMm) &&
-    (lhs.sizeMk == rhs.sizeMk) &&
-    (lhs.volMk == rhs.volMk) &&
-    (lhs.sizeMmk == rhs.sizeMmk) &&
-    (lhs.volMmk == rhs.volMmk) &&
-    (lhs.sizeMkBar == rhs.sizeMkBar) &&
-    (lhs.volMkBar == rhs.volMkBar) &&
-    (lhs.sizeMbar == rhs.sizeMbar) &&
-    (lhs.volMbar == rhs.volMbar) &&
-    // (lhs.numActiveBlock == rhs.numActiveBlock) &&
-    (lhs.numSplit == rhs.numSplit);    
+    (lhs.volMbar == rhs.volMbar);
   }
+
+  // if (lhs.method == General || lhs.method == GeneralSplit) {
+  //   return
+  //   (lhs.sizeMmk == rhs.sizeMmk) &&
+  //   (lhs.volMmk == rhs.volMmk) &&
+  //   (lhs.sizeMbar == rhs.sizeMbar) &&
+  //   (lhs.volMbar == rhs.volMbar) &&
+  //   // (lhs.numActiveBlock == rhs.numActiveBlock) &&
+  //   (lhs.numSplit == rhs.numSplit);
+  // } else {
+  //   return
+  //   (lhs.sizeMm == rhs.sizeMm) &&
+  //   (lhs.volMm == rhs.volMm) &&
+  //   (lhs.sizeMk == rhs.sizeMk) &&
+  //   (lhs.volMk == rhs.volMk) &&
+  //   (lhs.sizeMmk == rhs.sizeMmk) &&
+  //   (lhs.volMmk == rhs.volMmk) &&
+  //   (lhs.sizeMkBar == rhs.sizeMkBar) &&
+  //   (lhs.volMkBar == rhs.volMkBar) &&
+  //   (lhs.sizeMbar == rhs.sizeMbar) &&
+  //   (lhs.volMbar == rhs.volMbar) &&
+  //   // (lhs.numActiveBlock == rhs.numActiveBlock) &&
+  //   (lhs.numSplit == rhs.numSplit);    
+  // }
 }
 
 //
@@ -398,6 +459,16 @@ size_t TensorSplit::shmemAlloc(int sizeofType) const {
   return vol;
 }
 
+//
+// Returns true if the plan with TensorSplit ts already exists
+//
+bool planExists(TensorSplit& ts, std::list<cuttPlan_t>& plans) {
+  for (auto it=plans.begin();it != plans.end();it++) {
+    if (it->tensorSplit == ts) return true;
+  }
+  return false;
+}
+
 bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
@@ -407,7 +478,7 @@ bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
     ts.update(1, 1, rank, dim, permutation);    
     LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
-    if (numActiveBlock > 0) {
+    if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
       if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
       plans.push_back(plan);
@@ -426,7 +497,7 @@ bool createTiledSingleRankPlans(const int rank, const int* dim, const int* permu
     ts.update(1, 1, rank, dim, permutation);    
     LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
-    if (numActiveBlock > 0) {
+    if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
       if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
       plans.push_back(plan);
@@ -454,7 +525,7 @@ bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* perm
     }
     LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
-    if (numActiveBlock > 0) {
+    if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
       if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
       plans.push_back(plan);
@@ -467,8 +538,8 @@ bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* perm
 bool createGeneralPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
-  // Stores TensorSplits that have already been added (in order to avoid duplicates)
-  std::vector<TensorSplit> tsAdded;
+  // // Stores TensorSplits that have already been added (in order to avoid duplicates)
+  // std::vector<TensorSplit> tsAdded;
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
@@ -476,45 +547,88 @@ bool createGeneralPlans(const int rank, const int* dim, const int* permutation,
       TensorSplit ts;
       ts.method = General;
       ts.update(numMm, numMk, rank, dim, permutation);
+      // Amount of shared memory required
+      int shmemsize = ts.shmemAlloc(sizeofType);
+      if (shmemsize > prop.sharedMemPerBlock) {
+        // Does not fit into shared memory, need to split
+        ts.method = GeneralSplit;
+        // Minimum size of split dim allowed
+        const int splitDimMin = 4;
+        // Split the largest dimension
+        int maxDim = 0;
+        for (int i=0;i < ts.sizeMm;i++) {
+          if (dim[i] > maxDim) {
+            maxDim = dim[i];
+            ts.splitRank = i;
+          }
+        }
+        for (int i=0;i < ts.sizeMk;i++) {
+          int pi = permutation[i];
+          if (dim[pi] > maxDim) {
+            maxDim = dim[pi];
+            ts.splitRank = pi;
+          }
+        }
+        //
+        ts.update(numMm, numMk, rank, dim, permutation);
+        int minNumSplit = (ts.splitDim*ts.volMmkUnsplit*sizeofType - 1)/prop.sharedMemPerBlock + 1;
+        int maxNumSplit = std::max(minNumSplit, std::min(ts.splitDim/splitDimMin, minNumSplit + 60));
+        int bestVal = 0;
+        int bestNumSplit = 0;
+        for (ts.numSplit=minNumSplit;ts.numSplit <= maxNumSplit;ts.numSplit++) {
+          int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+          // int val = lc.numthread.x*numActiveBlock;
+          int val = ts.volMmkUsed()*numActiveBlock;
+          // printf("%d volMmk %d nAB %d val %d nthread %d nreg %d\n", 
+          //   ts.numSplit, ts.volMmkUsed(), numActiveBlock, val,
+          //   lc.numthread.x, lc.numRegStorage);
+          if (bestVal < val) {
+            bestVal = val;
+            bestNumSplit = ts.numSplit;
+          }
+        }
+        ts.numSplit = bestNumSplit;
+        if (ts.numSplit == 0) break;
+      }
       int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
       // If we can't fit to device, break out from inner loop
       if (numActiveBlock == 0) break;
-      // Do not add multiple copies of the same plan
-      bool multiple = false;
-      for (int i=0;i < tsAdded.size();i++) {
-        if (tsAdded[i] == ts) {
-          multiple = true;
-          break;
-        }
+      // // Do not add multiple copies of the same plan
+      // bool multiple = false;
+      // for (int i=0;i < tsAdded.size();i++) {
+      //   if (tsAdded[i] == ts) {
+      //     multiple = true;
+      //     break;
+      //   }
+      // }
+      // if (multiple) continue;
+      // tsAdded.push_back(ts);
+      if (!planExists(ts, plans)) {
+        cuttPlan_t plan;
+        if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+        plans.push_back(plan);
       }
-      if (multiple) continue;
-      tsAdded.push_back(ts);
-      cuttPlan_t plan;
-      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
-      plans.push_back(plan);
     }
   }
 
   return true;
 }
 
+/*
 bool createGeneralSplitPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   // Minimum size of split dim allowed
   const int splitDimMin = 4;
 
-  // Stores TensorSplits that have already been added (in order to avoid duplicates)
-  std::vector<TensorSplit> tsAdded;
+  // // Stores TensorSplits that have already been added (in order to avoid duplicates)
+  // std::vector<TensorSplit> tsAdded;
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
     for (int numMk=1;numMk < rank;numMk++) {
-      // if (numMm != 1 || numMk != 3) continue;
       TensorSplit ts;
       ts.method = GeneralSplit;
-      ts.splitRank = 0;
-      ts.numSplit = 1;
       ts.update(numMm, numMk, rank, dim, permutation);
       // Amount of shared memory required
       int shmemsize = ts.shmemAlloc(sizeofType);
@@ -563,24 +677,29 @@ bool createGeneralSplitPlans(const int rank, const int* dim, const int* permutat
       int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
       // If we can't fit to device, break out from inner loop
       if (numActiveBlock == 0) break;
-      // Do not add multiple copies of the same plan
-      bool multiple = false;
-      for (int i=0;i < tsAdded.size();i++) {
-        if (tsAdded[i] == ts) {
-          multiple = true;
-          break;
-        }
+      // // Do not add multiple copies of the same plan
+      // bool multiple = false;
+      // for (int i=0;i < tsAdded.size();i++) {
+      //   if (tsAdded[i] == ts) {
+      //     multiple = true;
+      //     break;
+      //   }
+      // }
+      // if (multiple) continue;
+      // tsAdded.push_back(ts);
+      if (!planExists(ts, plans)) {
+        printf("GENERAL SPLIT\n");
+        exit(1);
+        cuttPlan_t plan;
+        if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+        plans.push_back(plan);
       }
-      if (multiple) continue;
-      tsAdded.push_back(ts);
-      cuttPlan_t plan;
-      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
-      plans.push_back(plan);
     }
   }
 
   return true;
 }
+*/
 
 //
 // Create all possible plans
@@ -592,13 +711,12 @@ bool createPlans(const int rank, const int* dim, const int* permutation, const s
   if (!createTiledLeadVolSamePlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTiledSingleRankPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createGeneralPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createGeneralSplitPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  // if (!createGeneralSplitPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
 
   return true;
 }
 
 bool operator>(const cuttPlan_t& lhs, const cuttPlan_t& rhs) {
-  // return (lhs.numMemAccess < rhs.numMemAccess);
 
   const TensorSplit& lts = lhs.tensorSplit;
   const TensorSplit& rts = rhs.tensorSplit;

@@ -61,13 +61,17 @@ public:
   int sizeMkBar;
   int volMkBar;
 
-  int volMmBar;
-
   // Remaining volume
   int sizeMbar;
   int volMbar;
 
-  // Number of splits, for GeneralSplitInRank and GeneralSplitOutRank methods
+  // For General and GeneralSplit methods:
+  // Amount of contigious volume
+  int volMmkInCont;
+  int volMmkOutCont;
+
+  // For GeneralSplit method:
+  // Number of splits
   int numSplit;
 
   // Rank that is split
@@ -130,7 +134,7 @@ public:
 
   TensorSplit tensorSplit;
 
-  // Number of active thread blocks, for General method
+  // Number of active thread blocks
   int numActiveBlock;
 
   int cuDimMk;
