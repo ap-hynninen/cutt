@@ -842,8 +842,13 @@ void printDeviceInfo() {
   cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
   cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+  cudaSharedMemConfig pConfig;
+  cudaCheck(cudaDeviceGetSharedMemConfig(&pConfig));
+  int shMemBankSize = 4;
+  if (pConfig == cudaSharedMemBankSizeEightByte) shMemBankSize = 8;
   double mem_BW = (double)(prop.memoryClockRate*2*(prop.memoryBusWidth/8))/1.0e6;
   printf("Using %s SM version %d.%d\n", prop.name, prop.major, prop.minor);
-  printf("Clock %1.3lfGhz numSM %d ECC %d mem BW %1.2lfGB/s\n", (double)prop.clockRate/1e6,
-    prop.multiProcessorCount, prop.ECCEnabled, mem_BW);
+  printf("Clock %1.3lfGhz numSM %d ECC %d mem BW %1.2lfGB/s shMemBankSize %dB\n", (double)prop.clockRate/1e6,
+    prop.multiProcessorCount, prop.ECCEnabled, mem_BW, shMemBankSize);
+
 }
