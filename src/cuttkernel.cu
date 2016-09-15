@@ -208,7 +208,6 @@ __global__ void transposeGeneral(
       posMbarOut += __shfl_xor(posMbarOut, i);
     }
 
-    // Read from global memory
     int posMbarIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
 #pragma unroll
     for (int i=16;i >= 1;i/=2) {
@@ -217,6 +216,7 @@ __global__ void transposeGeneral(
 
     __syncthreads();
 
+    // Read from global memory
 #pragma unroll
     for (int j=0;j < numRegStorage;j++) {
       int posMmk = threadIdx.x + j*blockDim.x;
@@ -224,9 +224,9 @@ __global__ void transposeGeneral(
       if (posMmk < volMmk) shBuffer[posMmk] = dataIn[posIn];
     }
 
-    // Write to global memory
     __syncthreads();
 
+    // Write to global memory
 #pragma unroll
     for (int j=0;j < numRegStorage;j++) {
       int posMmk = threadIdx.x + j*blockDim.x;
@@ -261,7 +261,10 @@ __global__ void transposeGeneralSplit(
 
   const int warpLane = threadIdx.x & (warpSize - 1);
 
-  const int plusone = (blockIdx.x < (splitDim % gridDim.x));
+  // const int plusone = (blockIdx.x < (splitDim % gridDim.x));
+  const int p0 = blockIdx.x*splitDim/gridDim.x;
+  const int volSplit = (blockIdx.x + 1)*splitDim/gridDim.x - p0;
+  const int plusone = volSplit - splitDim/gridDim.x;
 
   TensorConvInOut Mmk;
   Mmk.c_in = 1;
@@ -281,9 +284,9 @@ __global__ void transposeGeneralSplit(
   // gridDim.x = number of splits
   // blockIdx.x = {0 ... gridDim.x - 1} is the split-index
   // Volume of this split
-  const int volSplit = (splitDim/gridDim.x) + plusone;
+  // const int volSplit = (splitDim/gridDim.x) + plusone;
   // Start position in this split
-  const int p0 = (splitDim/gridDim.x)*blockIdx.x + min(blockIdx.x, (splitDim % gridDim.x));
+  // const int p0 = (splitDim/gridDim.x)*blockIdx.x + min(blockIdx.x, (splitDim % gridDim.x));
   const int posMmkIn0  = p0*cMmSplit;
   const int posMmkOut0 = p0*cMkSplit;
   // Volume of split Mmk
@@ -319,7 +322,10 @@ __global__ void transposeGeneralSplit(
     Mbar = glMbar[warpLane];
   }
 
-  for (int posMbar=blockIdx.y;posMbar < volMbar;posMbar+=gridDim.y)
+  const int posMbar0 = blockIdx.y*volMbar/gridDim.y;
+  const int posMbar1 = (blockIdx.y + 1)*volMbar/gridDim.y;
+  for (int posMbar=posMbar0;posMbar < posMbar1;posMbar++)
+  // for (int posMbar=blockIdx.y;posMbar < volMbar;posMbar+=gridDim.y)
   {
 
     int posMbarOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
@@ -382,15 +388,11 @@ __global__ void transposeTiledLeadVolSame(
     Mbar = gl_Mbar[warpLane];
   }
 
-  // int* dimMmkIn  = &transposeArg[0];
-
   const int bx = (blockIdx.x % numMm)*TILEDIM;
   const int by = (blockIdx.x / numMm)*TILEDIM;
 
   const int x = bx + threadIdx.x;
   const int y = by + threadIdx.y;
-  // const int x = blockIdx.x * TILEDIM + threadIdx.x;
-  // const int y = blockIdx.y * TILEDIM + threadIdx.y;
 
   for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
   {
@@ -407,7 +409,6 @@ __global__ void transposeTiledLeadVolSame(
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos  = pos0  + j*cuDimMk;
         if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
-        // if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
           val[j/TILEROWS] = dataIn[pos];
         }
       }
@@ -422,7 +423,6 @@ __global__ void transposeTiledLeadVolSame(
       for (int j=0;j < TILEDIM;j += TILEROWS) {
         int pos = pos0 + j*cuDimMm;
         if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
-        // if ((x < dimMmkIn[0]) && (y + j < dimMmkIn[1])) {
           dataOut[pos] = val[j/TILEROWS];
         }
       }
@@ -461,6 +461,7 @@ void cuttKernelSetSharedMemConfig() {
 
   cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledSingleRank<double>, cudaSharedMemBankSizeEightByte));
   cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledLeadVolSame<double>, cudaSharedMemBankSizeEightByte));
+
 }
 
 //
@@ -594,7 +595,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.y = 1;
       lc.numthread.z = 1;
       lc.numblock.x = max(1, ts.volMbar);
-      lc.numblock.x = min(256, lc.numblock.x);
+      lc.numblock.x = min(prop.multiProcessorCount*18, lc.numblock.x);
       lc.numblock.y = 1;
       lc.numblock.z = 1;
 
@@ -648,7 +649,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.y = 1;
       lc.numthread.z = 1;
       lc.numblock.x = ts.numSplit;
-      lc.numblock.y = max(1, min(256/lc.numblock.x, ts.volMbar));
+      lc.numblock.y = max(1, min((prop.multiProcessorCount*18)/lc.numblock.x, ts.volMbar));
       lc.numblock.z = 1;
 
       for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
@@ -677,11 +678,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.z = 1;
       lc.numblock.x = ((ts.volMm - 1)/TILEDIM + 1)*((ts.volMk - 1)/TILEDIM + 1);
       lc.numblock.y = 1;
-      // lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
-      // lc.numblock.y = (ts.volMk - 1)/TILEDIM + 1;
-      lc.numblock.z = ts.volMbar;
-      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
-      lc.numblock.z = max(1, lc.numblock.z);
+      lc.numblock.z = max(1, min((prop.multiProcessorCount*8)/(lc.numblock.x*lc.numblock.y), ts.volMbar));
       lc.shmemsize = 0;
       lc.numRegStorage = 0;
     }
@@ -694,10 +691,8 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       lc.numthread.z = 1;
       lc.numblock.x = ((ts.volMm - 1)/TILEDIM + 1)*((ts.volMkBar - 1)/TILEDIM + 1);
       lc.numblock.y = 1;
-      // lc.numblock.x = (ts.volMm - 1)/TILEDIM + 1;
-      // lc.numblock.y = (ts.volMkBar - 1)/TILEDIM + 1;
       lc.numblock.z = ts.volMbar;
-      lc.numblock.z = min(64/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
+      lc.numblock.z = min((prop.multiProcessorCount*8)/(lc.numblock.x*lc.numblock.y), lc.numblock.z);
       lc.numblock.z = max(1, lc.numblock.z);
       lc.shmemsize = 0;
       lc.numRegStorage = 0;

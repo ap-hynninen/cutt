@@ -34,7 +34,8 @@ CUDAC = nvcc
 # SM versions for which code is generated must be sm_30 and above
 GENCODE_SM35  := -gencode arch=compute_35,code=sm_35
 GENCODE_SM50  := -gencode arch=compute_50,code=sm_50
-GENCODE_FLAGS := $(GENCODE_SM35) $(GENCODE_SM50)
+GENCODE_FLAGS := $(GENCODE_SM35)
+#$(GENCODE_SM50)
 
 #######################################################
 
@@ -57,7 +58,7 @@ OPTLEV = -O3
 # Defines
 DEFS = 
 
-OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/cuttGpuModel.o build/CudaUtils.o build/cuttTimer.o
+OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/cuttGpuModel.o build/CudaUtils.o build/cuttTimer.o build/cuttGpuModelKernel.o
 OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
 OBJSBENCH = build/cutt_bench.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o build/CudaMemcpy.o
 OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)

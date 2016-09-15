@@ -41,20 +41,20 @@ SOFTWARE.
   }                                                  \
 } while(0)
 
-void set_device_array_async_T(void *data, int value, const int ndata, cudaStream_t stream, const size_t sizeofT);
-void set_device_array_T(void *data, int value, const int ndata, const size_t sizeofT);
+void set_device_array_async_T(void *data, int value, const size_t ndata, cudaStream_t stream, const size_t sizeofT);
+void set_device_array_T(void *data, int value, const size_t ndata, const size_t sizeofT);
 
 template <class T>
-void set_device_array(T *data, int value, const int ndata, cudaStream_t stream=0) {
+void set_device_array(T *data, int value, const size_t ndata, cudaStream_t stream=0) {
   set_device_array_async_T(data, value, ndata, stream, sizeof(T));
 }
 
 template <class T>
-void set_device_array_sync(T *data, int value, const int ndata) {
+void set_device_array_sync(T *data, int value, const size_t ndata) {
   set_device_array_T(data, value, ndata, sizeof(T));
 }
 
-void allocate_device_T(void **pp, const int len, const size_t sizeofT);
+void allocate_device_T(void **pp, const size_t len, const size_t sizeofT);
 //----------------------------------------------------------------------------------------
 //
 // Allocate gpu memory
@@ -62,7 +62,7 @@ void allocate_device_T(void **pp, const int len, const size_t sizeofT);
 // len = length of the array
 //
 template <class T>
-void allocate_device(T **pp, const int len) {
+void allocate_device(T **pp, const size_t len) {
   allocate_device_T((void **)pp, len, sizeof(T));
 }
 
@@ -78,20 +78,20 @@ void deallocate_device(T **pp) {
 }
 //----------------------------------------------------------------------------------------
 
-void copy_HtoD_async_T(const void *h_array, void *d_array, int array_len, cudaStream_t stream,
+void copy_HtoD_async_T(const void *h_array, void *d_array, size_t array_len, cudaStream_t stream,
            const size_t sizeofT);
-void copy_HtoD_T(const void *h_array, void *d_array, int array_len,
+void copy_HtoD_T(const void *h_array, void *d_array, size_t array_len,
      const size_t sizeofT);
-void copy_DtoH_async_T(const void *d_array, void *h_array, const int array_len, cudaStream_t stream,
+void copy_DtoH_async_T(const void *d_array, void *h_array, const size_t array_len, cudaStream_t stream,
            const size_t sizeofT);
-void copy_DtoH_T(const void *d_array, void *h_array, const int array_len, const size_t sizeofT);
+void copy_DtoH_T(const void *d_array, void *h_array, const size_t array_len, const size_t sizeofT);
 
 //----------------------------------------------------------------------------------------
 //
 // Copies memory Host -> Device
 //
 template <class T>
-void copy_HtoD(const T *h_array, T *d_array, int array_len, cudaStream_t stream=0) {
+void copy_HtoD(const T *h_array, T *d_array, size_t array_len, cudaStream_t stream=0) {
   copy_HtoD_async_T(h_array, d_array, array_len, stream, sizeof(T));
 }
 
@@ -100,7 +100,7 @@ void copy_HtoD(const T *h_array, T *d_array, int array_len, cudaStream_t stream=
 // Copies memory Host -> Device using synchronous calls
 //
 template <class T>
-void copy_HtoD_sync(const T *h_array, T *d_array, int array_len) {
+void copy_HtoD_sync(const T *h_array, T *d_array, size_t array_len) {
   copy_HtoD_T(h_array, d_array, array_len, sizeof(T));
 }
 
@@ -109,7 +109,7 @@ void copy_HtoD_sync(const T *h_array, T *d_array, int array_len) {
 // Copies memory Device -> Host
 //
 template <class T>
-void copy_DtoH(const T *d_array, T *h_array, const int array_len, cudaStream_t stream=0) {
+void copy_DtoH(const T *d_array, T *h_array, const size_t array_len, cudaStream_t stream=0) {
   copy_DtoH_async_T(d_array, h_array, array_len, stream, sizeof(T));
 }
 //----------------------------------------------------------------------------------------
@@ -117,7 +117,7 @@ void copy_DtoH(const T *d_array, T *h_array, const int array_len, cudaStream_t s
 // Copies memory Device -> Host using synchronous calls
 //
 template <class T>
-void copy_DtoH_sync(const T *d_array, T *h_array, const int array_len) {
+void copy_DtoH_sync(const T *d_array, T *h_array, const size_t array_len) {
   copy_DtoH_T(d_array, h_array, array_len, sizeof(T));
 }
 

@@ -22,15 +22,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *******************************************************************************/
-#ifndef CUTTKERNEL_H
-#define CUTTKERNEL_H
+#ifndef CUTTGPUMODELKERNEL_H
+#define CUTTGPUMODELKERNEL_H
 #include "cuttplan.h"
 
-void cuttKernelSetSharedMemConfig();
+void runCounters(const int warpSize, const int* hostPosData, const int numPosData,
+  const int accWidth, const int cacheWidth, int* host_tran, int* host_cl_full, int* host_cl_part);
 
-int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
-  LaunchConfig& lc);
+bool cuttGpuModelKernel(cuttPlan_t& plan, const int accWidth, const int cacheWidth,
+  int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
+  int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1);
 
-bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut);
-
-#endif // CUTTKERNEL_H
+#endif // CUTTGPUMODELKERNEL_H

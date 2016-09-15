@@ -31,6 +31,7 @@ SOFTWARE.
 #include "CudaUtils.h"
 #include "TensorTester.h"
 #include "cuttTimer.h"
+#include "cuttGpuModel.h"  // testCounters
 
 //
 // Error checking wrapper for cutt
@@ -55,6 +56,7 @@ bool test1();
 bool test2();
 bool test3();
 bool test4();
+bool test5();
 template <typename T> bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation);
 void printVec(std::vector<int>& vec);
 
@@ -101,6 +103,7 @@ int main(int argc, char *argv[]) {
   if (!test2()) goto fail;
   if (!test3()) goto fail;
   if (!test4()) goto fail;
+  if (!test5()) goto fail;
 
   {
     std::vector<int> worstDim;
@@ -399,6 +402,34 @@ bool test4() {
 
   return run_ok;
 }
+
+
+//
+// Test 5: Transaction and cache line counters
+//
+bool test5() {
+
+  {
+    // Number of elements that are loaded per memory transaction:
+    // 128 bytes per transaction
+    const  int accWidth = 128/sizeof(double);
+    // L2 cache line width is 32 bytes
+    const int cacheWidth = 32/sizeof(double);
+    if (!testCounters(32, accWidth, cacheWidth)) return false;
+  }
+
+  {
+    // Number of elements that are loaded per memory transaction:
+    // 128 bytes per transaction
+    const  int accWidth = 128/sizeof(float);
+    // L2 cache line width is 32 bytes
+    const int cacheWidth = 32/sizeof(float);
+    if (!testCounters(32, accWidth, cacheWidth)) return false;
+  }
+
+  return true;
+}
+
 
 template <typename T>
 bool test_tensor(std::vector<int>& dim, std::vector<int>& permutation) {

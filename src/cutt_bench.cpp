@@ -319,6 +319,8 @@ end:
   delete timerFloat;
   delete timerDouble;
 
+  cudaCheck(cudaDeviceSynchronize());
+
   cudaCheck(cudaDeviceReset());
   return 0;
 }
@@ -850,5 +852,6 @@ void printDeviceInfo() {
   printf("Using %s SM version %d.%d\n", prop.name, prop.major, prop.minor);
   printf("Clock %1.3lfGhz numSM %d ECC %d mem BW %1.2lfGB/s shMemBankSize %dB\n", (double)prop.clockRate/1e6,
     prop.multiProcessorCount, prop.ECCEnabled, mem_BW, shMemBankSize);
+  printf("L2 %1.2lfMB\n", (double)prop.l2CacheSize/(double)(1024*1024));
 
 }

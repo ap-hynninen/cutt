@@ -147,7 +147,8 @@ public:
   // Average memory level parallelism = average unroll count
   float mlp;
   int gld_req, gst_req, gld_tran, gst_tran;
-  int cl_full, cl_part;
+  int cl_full_l2, cl_part_l2;
+  int cl_full_l1, cl_part_l1;
   int sld_req, sst_req, sld_tran, sst_tran;
   double cycles;
 
@@ -182,6 +183,7 @@ public:
   void setStream(cudaStream_t stream_in);
   bool setup(const int rank_in, const int* dim, const int* permutation,
     const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in);
+  bool countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, const int numPosMbarSample=0);
   void activate();
   void nullDevicePointers();
 private:
@@ -192,13 +194,17 @@ private:
 
 // void findMispredictionBest(std::list<cuttPlan_t>::iterator bestPlan, std::vector<double>& times, double bestTime);
 
-void printMatlab(std::list<cuttPlan_t>& plans, std::vector<double>& times);
+void printMatlab(cudaDeviceProp& prop, std::list<cuttPlan_t>& plans, std::vector<double>& times);
 
 void reduceRanks(const int rank, const int* dim, const int* permutation,
   std::vector<int>& redDim, std::vector<int>& redPermutation);
 
-bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
-  cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+// bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
+//   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+bool createPlans(const int rank, const int* dim, const int* permutation,
+  const int redRank, const int* redDim, const int* redPermutation,
+  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
 
 std::list<cuttPlan_t>::iterator choosePlanHeuristic(std::list<cuttPlan_t>& plans);
 

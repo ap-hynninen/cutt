@@ -93,21 +93,34 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 
   // Create plans from reduced ranks
   std::list<cuttPlan_t> plans;
-  if (rank != redDim.size()) {
-    if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
-  }
+  // if (rank != redDim.size()) {
+  //   if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  // }
 
-  // Create plans from non-reduced ranks
-  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  // // Create plans from non-reduced ranks
+  // if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+
+  if (!createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
+    sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+
+  // Count cycles
+  for (auto it=plans.begin();it != plans.end();it++) {
+    if (!it->countCycles(sizeofType, prop, 10)) return CUTT_INTERNAL_ERROR;
+  }
 
   // Choose the plan
   std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
   if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
 
+  // bestPlan->print();
+
   // Create copy of the plan outside the list
   cuttPlan_t* plan = new cuttPlan_t();
   // NOTE: No deep copy needed here since device memory hasn't been allocated yet
   *plan = *bestPlan;
+  // Set device pointers to NULL in the old copy of the plan so
+  // that they won't be deallocated later when the object is destroyed
+  bestPlan->nullDevicePointers();
 
   // Set stream
   plan->setStream(stream);
@@ -156,12 +169,26 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 
   // Create plans from reduced ranks
   std::list<cuttPlan_t> plans;
-  if (rank != redDim.size()) {
+#if 0
+  // if (rank != redDim.size()) {
     if (!createPlans(redDim.size(), redDim.data(), redPermutation.data(), sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
-  }
+  // }
 
   // Create plans from non-reduced ranks
-  if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  // if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+#else
+  if (!createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
+    sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+#endif
+
+  // // Count cycles
+  // for (auto it=plans.begin();it != plans.end();it++) {
+  //   if (!it->countCycles(sizeofType, prop, 1)) return CUTT_INTERNAL_ERROR;
+  // }
+
+  // // Count the number of elements
+  size_t numBytes = sizeofType;
+  for (int i=0;i < rank;i++) numBytes *= dim[i];
 
   // Choose the plan
   double bestTime = 1.0e40;
@@ -171,6 +198,8 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   for (auto it=plans.begin();it != plans.end();it++) {
     // Activate plan
     it->activate();
+    // Clear output data to invalidate caches
+    set_device_array<char>((char *)odata, -1, numBytes);
     cudaCheck(cudaDeviceSynchronize());
     timer.start();
     // Execute plan
@@ -187,7 +216,9 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   }
   if (bestPlan == plans.end()) return CUTT_INTERNAL_ERROR;
 
-  printMatlab(plans, times);
+  // bestPlan = plans.begin();
+
+  // printMatlab(prop, plans, times);
   // findMispredictionBest(plans, times, bestPlan, bestTime);
   // bestPlan->print();
 

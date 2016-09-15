@@ -28,11 +28,11 @@ SOFTWARE.
 
 //----------------------------------------------------------------------------------------
 
-void set_device_array_async_T(void *data, int value, const int ndata, cudaStream_t stream, const size_t sizeofT) {
+void set_device_array_async_T(void *data, int value, const size_t ndata, cudaStream_t stream, const size_t sizeofT) {
   cudaCheck(cudaMemsetAsync(data, value, sizeofT*ndata, stream));
 }
 
-void set_device_array_T(void *data, int value, const int ndata, const size_t sizeofT) {
+void set_device_array_T(void *data, int value, const size_t ndata, const size_t sizeofT) {
   cudaCheck(cudaMemset(data, value, sizeofT*ndata));
 }
 
@@ -42,7 +42,7 @@ void set_device_array_T(void *data, int value, const int ndata, const size_t siz
 // pp = memory pointer
 // len = length of the array
 //
-void allocate_device_T(void **pp, const int len, const size_t sizeofT) {
+void allocate_device_T(void **pp, const size_t len, const size_t sizeofT) {
   cudaCheck(cudaMalloc(pp, sizeofT*len));
 }
 
@@ -64,12 +64,12 @@ void deallocate_device_T(void **pp) {
 //
 // Copies memory Host -> Device
 //
-void copy_HtoD_async_T(const void *h_array, void *d_array, int array_len, cudaStream_t stream,
+void copy_HtoD_async_T(const void *h_array, void *d_array, size_t array_len, cudaStream_t stream,
            const size_t sizeofT) {
   cudaCheck(cudaMemcpyAsync(d_array, h_array, sizeofT*array_len, cudaMemcpyHostToDevice, stream));
 }
 
-void copy_HtoD_T(const void *h_array, void *d_array, int array_len,
+void copy_HtoD_T(const void *h_array, void *d_array, size_t array_len,
      const size_t sizeofT) {
   cudaCheck(cudaMemcpy(d_array, h_array, sizeofT*array_len, cudaMemcpyHostToDevice));
 }
@@ -78,12 +78,12 @@ void copy_HtoD_T(const void *h_array, void *d_array, int array_len,
 //
 // Copies memory Device -> Host
 //
-void copy_DtoH_async_T(const void *d_array, void *h_array, const int array_len, cudaStream_t stream,
+void copy_DtoH_async_T(const void *d_array, void *h_array, const size_t array_len, cudaStream_t stream,
            const size_t sizeofT) {
   cudaCheck(cudaMemcpyAsync(h_array, d_array, sizeofT*array_len, cudaMemcpyDeviceToHost, stream));
 }
 
-void copy_DtoH_T(const void *d_array, void *h_array, const int array_len, const size_t sizeofT) {
+void copy_DtoH_T(const void *d_array, void *h_array, const size_t array_len, const size_t sizeofT) {
   cudaCheck(cudaMemcpy(h_array, d_array, sizeofT*array_len, cudaMemcpyDeviceToHost));
 }
 
