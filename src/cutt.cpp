@@ -181,9 +181,9 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 #endif
 
-  // // Count cycles
+  // Count cycles
   // for (auto it=plans.begin();it != plans.end();it++) {
-  //   if (!it->countCycles(sizeofType, prop, 1)) return CUTT_INTERNAL_ERROR;
+  //   if (!it->countCycles(sizeofType, prop, 10)) return CUTT_INTERNAL_ERROR;
   // }
 
   // // Count the number of elements

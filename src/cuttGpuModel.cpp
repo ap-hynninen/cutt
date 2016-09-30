@@ -435,9 +435,26 @@ void prepmodel5(cudaDeviceProp& prop,
   double freq = (double)prop.clockRate/1.0e6;
   int warpSize = prop.warpSize;
   // Delays & latencies in cycles
-  double base_dep_delay = 14.0;
-  double base_mem_latency = 358.0;
-  double sh_mem_latency = 30.0;
+  double base_dep_delay;
+  double base_mem_latency;
+  double sh_mem_latency;
+
+  if (prop.major <= 3) {
+    // Kepler
+    base_dep_delay = 14.0;
+    base_mem_latency = 358.0;
+    sh_mem_latency = 30.0;
+  } else if (prop.major <= 5) {
+    // Maxwell
+    base_dep_delay = 2.5;
+    base_mem_latency = 385.0;
+    sh_mem_latency = 5.0;
+  } else {
+    // Pascal and above
+    base_dep_delay = 2.5;
+    base_mem_latency = 385.0;
+    sh_mem_latency = 5.0;
+  } 
 
   int active_warps_per_SM = nthread*numActiveBlock/warpSize;
 

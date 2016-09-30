@@ -34,8 +34,8 @@ CUDAC = nvcc
 # SM versions for which code is generated must be sm_30 and above
 GENCODE_SM35  := -gencode arch=compute_35,code=sm_35
 GENCODE_SM50  := -gencode arch=compute_50,code=sm_50
-GENCODE_FLAGS := $(GENCODE_SM35)
-#$(GENCODE_SM50)
+GENCODE_SM52  := -gencode arch=compute_52,code=sm_52
+GENCODE_FLAGS := $(GENCODE_SM35) $(GENCODE_SM52)
 
 #######################################################
 
