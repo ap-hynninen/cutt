@@ -34,8 +34,8 @@ const int TILEDIM = 32;
 const int TILEROWS = 8;
 
 // Transposing methods
-enum {Unknown, Trivial, General, GeneralSplit,
-  TiledSingleRank, TiledLeadVolSame,
+enum {Unknown, Trivial, Packed, PackedSplit,
+  Tiled, TiledCopy,
   NumTransposeMethods};
 
 // Tells how tensor is split into Mm and Mk and what method is used
@@ -65,12 +65,12 @@ public:
   int sizeMbar;
   int volMbar;
 
-  // For General and GeneralSplit methods:
+  // For Packed and PackedSplit methods:
   // Amount of contigious volume
   int volMmkInCont;
   int volMmkOutCont;
 
-  // For GeneralSplit method:
+  // For PackedSplit method:
   // Number of splits
   int numSplit;
 
@@ -107,7 +107,7 @@ public:
   dim3 numblock;
   size_t shmemsize;
 
-  // For the General method, number of registers to use for storage
+  // For the Packed method, number of registers to use for storage
   int numRegStorage;
 
   void print();

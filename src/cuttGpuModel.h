@@ -33,13 +33,13 @@ void computePos(int vol0, int vol1,
   std::vector<TensorConvInOut>::iterator it0, std::vector<TensorConvInOut>::iterator it1,
   std::vector<int>& posIn, std::vector<int>& posOut);
 
-void countGeneralGlTransactions(const int warpSize, const int accWidth, const int cacheWidth,
+void countPackedGlTransactions(const int warpSize, const int accWidth, const int cacheWidth,
   const int numthread, const int posMbarIn, const int posMbarOut, const int volMmk, 
   std::vector<int>& posMmkIn, std::vector<int>& posMmkOut,
   int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
   int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1);
 
-void countGeneralShTransactions(const int warpSize, const int bankWidth, const int numthread,
+void countPackedShTransactions(const int warpSize, const int bankWidth, const int numthread,
   const int volMmk, std::vector<TensorConv>::iterator Msh_it0, std::vector<TensorConv>::iterator Msh_it1,
   int& sld_tran, int& sst_tran, int& sld_req, int& sst_req);
 
@@ -49,7 +49,7 @@ void countTiledGlTransactions(const bool leadVolSame,
   std::vector<TensorConvInOut>& hostMbar, const int sizeMbar,
   int& num_iter, float& mlp, int& gld_tran, int& gst_tran, int& gld_req, int& gst_req, int& cl_full, int& cl_part);
 
-double cyclesGeneral(cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
+double cyclesPacked(cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran, int num_iter, int cl_full, int cl_part);
 

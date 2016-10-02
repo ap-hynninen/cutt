@@ -245,7 +245,7 @@ void writeMemStat(const int warpLane, MemStat memStat, MemStat* RESTRICT glMemSt
 //
 __global__ void
 __launch_bounds__(TILEDIM*TILEROWS, 1)
-countTiledSingleRank(
+countTiled(
   const int numMm, const int volMbar, const int sizeMbar,
   const int2 tiledVol, const int cuDimMk, const int cuDimMm,
   const TensorConvInOut* RESTRICT glMbar,
@@ -322,12 +322,12 @@ countTiledSingleRank(
 }
 
 //
-// General transpose. Thread block loads plan.volMmk number of elements
+// Packed transpose. Thread block loads plan.volMmk number of elements
 //
 template <int numRegStorage>
 __global__ void
 __launch_bounds__(1024, 1)
-countGeneral(
+countPacked(
   const int volMmk, const int volMbar,
   const int sizeMmk, const int sizeMbar,
   const TensorConvInOut* RESTRICT gl_Mmk,
@@ -437,7 +437,7 @@ countGeneral(
 }
 
 //
-// General method with a split rank
+// Packed method with a split rank
 //
 // dim nthread(((volMmkWithSplit - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize, 1, 1)
 // dim nblock(ts.numSplit, min(256, max(1, ts.volMbar)), 1)
@@ -445,7 +445,7 @@ countGeneral(
 template <int numRegStorage>
 __global__ void
 __launch_bounds__(1024, 1)
-countGeneralSplit(
+countPackedSplit(
   const int splitDim, const int volMmkUnsplit, const int volMbar,
   const int sizeMmk, const int sizeMbar,
   const int cMmSplit, const int cMkSplit,
@@ -579,7 +579,7 @@ countGeneralSplit(
 //
 __global__ void
 __launch_bounds__(TILEDIM*TILEROWS, 1)
-countTiledLeadVolSame(
+countTiledCopy(
   const int numMm, const int volMbar, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
   const int2 tiledVol,
@@ -700,11 +700,11 @@ bool cuttGpuModelKernel(cuttPlan_t& plan, const int accWidth, const int cacheWid
       return false;
     }
 
-    case General:
+    case Packed:
     {
       switch(lc.numRegStorage) {
 #define CALL0(NREG) \
-    countGeneral<NREG> <<< lc.numblock, lc.numthread, ts.volMmk*sizeof(int), plan.stream >>> \
+    countPacked<NREG> <<< lc.numblock, lc.numthread, ts.volMmk*sizeof(int), plan.stream >>> \
       (ts.volMmk, ts.volMbar, ts.sizeMmk, ts.sizeMbar, \
       plan.Mmk, plan.Mbar, accWidth, cacheWidth, devMemStat)
 #define CALL(ICASE) case ICASE: CALL0(ICASE); break
@@ -719,7 +719,7 @@ bool cuttGpuModelKernel(cuttPlan_t& plan, const int accWidth, const int cacheWid
     }
     break;
 
-    case GeneralSplit:
+    case PackedSplit:
     {
 
       // Calculate max. volume of split Mmk
@@ -728,7 +728,7 @@ bool cuttGpuModelKernel(cuttPlan_t& plan, const int accWidth, const int cacheWid
 
       switch(lc.numRegStorage) {
 #define CALL0(NREG) \
-    countGeneralSplit<NREG> <<< lc.numblock, lc.numthread, volMmkSplit*sizeof(int), plan.stream >>> \
+    countPackedSplit<NREG> <<< lc.numblock, lc.numthread, volMmkSplit*sizeof(int), plan.stream >>> \
       (ts.splitDim, ts.volMmkUnsplit, ts. volMbar, ts.sizeMmk, ts.sizeMbar, \
         plan.cuDimMm, plan.cuDimMk, plan.Mmk, plan.Mbar, accWidth, cacheWidth, devMemStat)
 #define CALL(ICASE) case ICASE: CALL0(ICASE); break
@@ -743,17 +743,17 @@ bool cuttGpuModelKernel(cuttPlan_t& plan, const int accWidth, const int cacheWid
     }
     break;
 
-    case TiledSingleRank:
+    case Tiled:
     {
-      countTiledSingleRank <<< lc.numblock, lc.numthread, 0, plan.stream >>>
+      countTiled <<< lc.numblock, lc.numthread, 0, plan.stream >>>
       (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm,
         plan.Mbar, accWidth, cacheWidth, devMemStat);
     }
     break;
 
-    case TiledLeadVolSame:
+    case TiledCopy:
     {
-      countTiledLeadVolSame <<< lc.numblock, lc.numthread, 0, plan.stream >>>
+      countTiledCopy <<< lc.numblock, lc.numthread, 0, plan.stream >>>
       (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol,
         plan.Mbar, accWidth, cacheWidth, devMemStat);
     }

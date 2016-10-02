@@ -38,17 +38,17 @@ void printMethod(int method) {
     case Trivial:
     printf("Trivial");
     break;
-    case General:
-    printf("General");
+    case Packed:
+    printf("Packed");
     break;
-    case GeneralSplit:
-    printf("GeneralSplit");
+    case PackedSplit:
+    printf("PackedSplit");
     break;
-    case TiledSingleRank:
-    printf("TiledSingleRank");
+    case Tiled:
+    printf("Tiled");
     break;
-    case TiledLeadVolSame:
-    printf("TiledLeadVolSame");
+    case TiledCopy:
+    printf("TiledCopy");
     break;
     case Unknown:
     printf("Unknown");
@@ -194,7 +194,7 @@ void TensorSplit::print() {
   printf("volMm %d volMk %d volMmk %d volMbar %d volMkBar %d\n",
     volMm, volMk, volMmk, volMbar, volMkBar);
   printf("volMmkInCont %d volMmkOutCont %d\n", volMmkInCont, volMmkOutCont);
-  if (method == GeneralSplit) printf("numSplit %d splitRank %d\n", numSplit, splitRank);
+  if (method == PackedSplit) printf("numSplit %d splitRank %d\n", numSplit, splitRank);
 }
 
 void TensorSplit::update(const int sizeMm_in, const int sizeMk_in, const int rank,
@@ -283,21 +283,21 @@ bool operator==(const TensorSplit& lhs, const TensorSplit& rhs) {
 
   if (lhs.method == Trivial) return true;
 
-  if (lhs.method == TiledSingleRank) {
+  if (lhs.method == Tiled) {
     return
     (lhs.volMm == rhs.volMm) &&
     (lhs.volMk == rhs.volMk) &&
     (lhs.volMbar == rhs.volMbar);
   }
 
-  if (lhs.method == TiledLeadVolSame) {
+  if (lhs.method == TiledCopy) {
     return
     (lhs.volMm == rhs.volMm) &&
     (lhs.volMkBar == rhs.volMkBar) &&
     (lhs.volMbar == rhs.volMbar);
   }
 
-  if (lhs.method == General || lhs.method == GeneralSplit) {
+  if (lhs.method == Packed || lhs.method == PackedSplit) {
     return
     (lhs.volMmkInCont == rhs.volMmkInCont) &&
     (lhs.volMmkOutCont == rhs.volMmkOutCont) &&
@@ -305,7 +305,7 @@ bool operator==(const TensorSplit& lhs, const TensorSplit& rhs) {
     (lhs.volMbar == rhs.volMbar);
   }
 
-  // if (lhs.method == General || lhs.method == GeneralSplit) {
+  // if (lhs.method == Packed || lhs.method == PackedSplit) {
   //   return
   //   (lhs.sizeMmk == rhs.sizeMmk) &&
   //   (lhs.volMmk == rhs.volMmk) &&
@@ -345,25 +345,25 @@ size_t TensorSplit::shmem() const {
     }
     break;
 
-    case General:
+    case Packed:
     {
       vol = volMmk;
     }
     break;
 
-    case GeneralSplit:
+    case PackedSplit:
     {
       vol = (splitDim/numSplit + ((splitDim % numSplit) > 0))*volMmkUnsplit;
     }
     break;
 
-    case TiledSingleRank:
+    case Tiled:
     {
       vol = TILEDIM*TILEDIM;
     }
     break;
 
-    case TiledLeadVolSame:
+    case TiledCopy:
     {
       vol = 0;
     }
@@ -388,25 +388,25 @@ size_t TensorSplit::volMmkUsed() const {
     }
     break;
 
-    case General:
+    case Packed:
     {
       vol = volMmk;
     }
     break;
 
-    case GeneralSplit:
+    case PackedSplit:
     {
       vol = (splitDim/numSplit)*volMmkUnsplit;
     }
     break;
 
-    case TiledSingleRank:
+    case Tiled:
     {
       vol = std::min(TILEDIM, volMm)*std::min(TILEDIM, volMk);
     }
     break;
 
-    case TiledLeadVolSame:
+    case TiledCopy:
     {
       vol = std::min(TILEDIM, volMm)*std::min(TILEDIM, volMk);
     }
@@ -432,25 +432,25 @@ size_t TensorSplit::shmemAlloc(int sizeofType) const {
     }
     break;
 
-    case General:
+    case Packed:
     {
       vol = (size_t)volMmk*sizeofType;
     }
     break;
 
-    case GeneralSplit:
+    case PackedSplit:
     {
       vol = (size_t)(splitDim/numSplit + ((splitDim % numSplit) > 0))*volMmkUnsplit*sizeofType;
     }
     break;
 
-    case TiledSingleRank:
+    case Tiled:
     {
       vol = (TILEDIM+1)*TILEDIM*sizeofType;
     }
     break;
 
-    case TiledLeadVolSame:
+    case TiledCopy:
     {
       vol = 0;
     }
@@ -490,12 +490,12 @@ bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
   return true;
 }
 
-bool createTiledSingleRankPlans(const int rank, const int* dim, const int* permutation,
+bool createTiledPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   if (permutation[0] != 0 && rank > 1) {
     TensorSplit ts;
-    ts.method = TiledSingleRank;
+    ts.method = Tiled;
     ts.update(1, 1, rank, dim, permutation);    
     LaunchConfig lc;
     int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
@@ -509,7 +509,7 @@ bool createTiledSingleRankPlans(const int rank, const int* dim, const int* permu
   return true;
 }
 
-bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* permutation,
+bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   // Count number of Mm and Mk which are the same
@@ -519,7 +519,7 @@ bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* perm
   }
   if (numMmMkSame >= 1) {
     TensorSplit ts;
-    ts.method = TiledLeadVolSame;
+    ts.method = TiledCopy;
     if (numMmMkSame < rank) {
       ts.update(numMmMkSame, numMmMkSame + 1, rank, dim, permutation);      
     } else {
@@ -537,14 +537,14 @@ bool createTiledLeadVolSamePlans(const int rank, const int* dim, const int* perm
   return true;
 }
 
-bool createGeneralPlans(const int rank, const int* dim, const int* permutation,
+bool createPackedPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
     for (int numMk=1;numMk < rank;numMk++) {
       TensorSplit ts;
-      ts.method = General;
+      ts.method = Packed;
       ts.update(numMm, numMk, rank, dim, permutation);
       int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
       // Does not fit on the device, break out of inner loop
@@ -560,20 +560,20 @@ bool createGeneralPlans(const int rank, const int* dim, const int* permutation,
   return true;
 }
 
-bool createGeneralSplitPlans(const int rank, const int* dim, const int* permutation,
+bool createPackedSplitPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
     for (int numMk=1;numMk < rank;numMk++) {
       TensorSplit ts;
-      ts.method = General;
+      ts.method = Packed;
       ts.update(numMm, numMk, rank, dim, permutation);
       // Amount of shared memory required
       size_t shmemsize = ts.shmemAlloc(sizeofType);
       if (shmemsize > prop.sharedMemPerBlock) {
         // Does not fit into shared memory, need to split
-        ts.method = GeneralSplit;
+        ts.method = PackedSplit;
         // Minimum size of split dimension
         const int splitDimMin = 2;
         // Split the largest dimension
@@ -672,12 +672,12 @@ bool createPlans(const int rank, const int* dim, const int* permutation,
   if (!createTrivialPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
   // If Trivial plan was created, that's the only one we need
   if (size0 != plans.size()) return true;
-  if (!createTiledLeadVolSamePlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
-  if (!createTiledSingleRankPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
-  if (!createGeneralPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createGeneralSplitPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  if (!createTiledCopyPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
+  if (!createTiledPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
+  if (!createPackedPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  if (!createPackedSplitPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (rank != rankRed) {
-    if (!createGeneralSplitPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
+    if (!createPackedSplitPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
   }
 
   return true;
@@ -692,44 +692,44 @@ bool operator>(const cuttPlan_t& lhs, const cuttPlan_t& rhs) {
   if (lts.method == Trivial) return true;
   if (rts.method == Trivial) return false;
 
-  double dp = fabs(lhs.cycles - rhs.cycles)/std::min(lhs.cycles, rhs.cycles);
-  if (dp < 0.15 && (lts.method == General || lts.method == GeneralSplit) &&
-    (rts.method == General || rts.method == GeneralSplit)) {
+  // double dp = fabs(lhs.cycles - rhs.cycles)/std::min(lhs.cycles, rhs.cycles);
+  // if (dp < 0.15 && (lts.method == Packed || lts.method == PackedSplit) &&
+  //   (rts.method == Packed || rts.method == PackedSplit)) {
 
-    if (lts.method == General && rts.method == General) {
-      return (lhs.numActiveBlock > rhs.numActiveBlock);
-    } else if (lts.method == General && rts.method == GeneralSplit) {
-      if (lhs.cl_part_l1 == 0 && rhs.cl_part_l1 == 0) {
-        if (lts.volMmkOutCont == rts.volMmkOutCont) {
-          return (lhs.cycles < rhs.cycles);
-        } else {
-          return (lts.volMmkOutCont > rts.volMmkOutCont);
-        }
-      } else {
-        return (lhs.cl_part_l1 == 0);
-      }
-    } else if (lts.method == GeneralSplit && rts.method == General) {
-      if (lhs.cl_part_l1 == 0 && rhs.cl_part_l1 == 0) {
-        if (lts.volMmkOutCont == rts.volMmkOutCont) {
-          return (lhs.cycles < rhs.cycles);
-        } else {
-          return (lts.volMmkOutCont > rts.volMmkOutCont);
-        }
-      } else {
-        return (rhs.cl_part_l1 != 0);
-      }
-    } else { 
-      //else if (lts.method == GeneralSplit && rts.method == GeneralSplit) {
-      if (lhs.cl_part_l1 == rhs.cl_part_l1) {
-        return (lts.volMmkOutCont > rts.volMmkOutCont);        
-      } else {
-        return (lhs.cl_part_l1 < rhs.cl_part_l1);
-      }
-    }
+  //   if (lts.method == Packed && rts.method == Packed) {
+  //     return (lhs.numActiveBlock > rhs.numActiveBlock);
+  //   } else if (lts.method == Packed && rts.method == PackedSplit) {
+  //     if (lhs.cl_part_l1 == 0 && rhs.cl_part_l1 == 0) {
+  //       if (lts.volMmkOutCont == rts.volMmkOutCont) {
+  //         return (lhs.cycles < rhs.cycles);
+  //       } else {
+  //         return (lts.volMmkOutCont > rts.volMmkOutCont);
+  //       }
+  //     } else {
+  //       return (lhs.cl_part_l1 == 0);
+  //     }
+  //   } else if (lts.method == PackedSplit && rts.method == Packed) {
+  //     if (lhs.cl_part_l1 == 0 && rhs.cl_part_l1 == 0) {
+  //       if (lts.volMmkOutCont == rts.volMmkOutCont) {
+  //         return (lhs.cycles < rhs.cycles);
+  //       } else {
+  //         return (lts.volMmkOutCont > rts.volMmkOutCont);
+  //       }
+  //     } else {
+  //       return (rhs.cl_part_l1 != 0);
+  //     }
+  //   } else { 
+  //     //else if (lts.method == PackedSplit && rts.method == PackedSplit) {
+  //     if (lhs.cl_part_l1 == rhs.cl_part_l1) {
+  //       return (lts.volMmkOutCont > rts.volMmkOutCont);        
+  //     } else {
+  //       return (lhs.cl_part_l1 < rhs.cl_part_l1);
+  //     }
+  //   }
 
-  } else {
+  // } else {
     return (lhs.cycles < rhs.cycles);
-  }
+  // }
 }
 
 bool operator<(const cuttPlan_t& lhs, const cuttPlan_t& rhs) {
@@ -762,8 +762,8 @@ void printMatlab(cudaDeviceProp& prop, std::list<cuttPlan_t>& plans, std::vector
   for (auto it=plans.begin();it != plans.end();it++,i++) {
     TensorSplit& ts = it->tensorSplit;
     LaunchConfig& lc = it->launchConfig;
-    if (ts.method == General || ts.method == GeneralSplit ||
-      ts.method == TiledSingleRank || ts.method == TiledLeadVolSame)
+    if (ts.method == Packed || ts.method == PackedSplit ||
+      ts.method == Tiled || ts.method == TiledCopy)
     {
       int numthread = lc.numthread.x*lc.numthread.y*lc.numthread.z;
       printf("MATLAB %d %d %d %d %1.3f %d %d %d %d %d %d %d %d %d %d %d %d %d %e %e\n", count, ts.method,
@@ -829,12 +829,12 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
   // Build cO
   TensorC cO(rank, rank, permutation, dim);
 
-  if (tensorSplit.method == TiledSingleRank) {
+  if (tensorSplit.method == Tiled) {
     cuDimMk = cI.get(permutation[0]);
     cuDimMm = cO.get(0);
     tiledVol.x = dim[0];
     tiledVol.y = dim[permutation[0]];
-  } else if (tensorSplit.method == TiledLeadVolSame) {
+  } else if (tensorSplit.method == TiledCopy) {
     int rankMk = permutation[tensorSplit.sizeMk - 1];
     cuDimMk = cI.get(rankMk);
     cuDimMm = cO.get(rankMk);
@@ -909,7 +909,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
   mlp = 0.0f;
   cycles = 0.0;
 
-  if (tensorSplit.method == GeneralSplit) {
+  if (tensorSplit.method == PackedSplit) {
     if (tensorSplit.splitRank < 0) return false;
     std::vector<int> dimSplit(dim, dim + rank);
     std::vector<int> dimSplitPlusOne(dim, dim + rank);
@@ -976,7 +976,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
     }
   }
 
-  if (tensorSplit.method == General) {
+  if (tensorSplit.method == Packed) {
     // Build MmkI = {q_1, ..., q_a}
     std::vector<int> MmkI(tensorSplit.sizeMmk);
     int j = 0;
@@ -1037,7 +1037,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
   // L2 cache line width is 32 bytes
   const int cacheWidth = 32/sizeofType;
 
-  if (tensorSplit.method == TiledSingleRank) {
+  if (tensorSplit.method == Tiled) {
     // Global memory
     countTiledGlTransactions(false, numPosMbarSample, tensorSplit.volMm, tensorSplit.volMk, tensorSplit.volMbar,
       cuDimMk, cuDimMm, accWidth, cacheWidth, hostMbar, tensorSplit.sizeMbar,
@@ -1047,7 +1047,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
     sst_tran = 1;
     sld_req = 1;
     sst_req = 1;
-  } else if (tensorSplit.method == TiledLeadVolSame) {
+  } else if (tensorSplit.method == TiledCopy) {
     // Global memory
     countTiledGlTransactions(true, numPosMbarSample, tensorSplit.volMm, tensorSplit.volMkBar, tensorSplit.volMbar,
       cuDimMk, cuDimMm, accWidth, cacheWidth, hostMbar, tensorSplit.sizeMbar,
@@ -1057,7 +1057,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
     sst_tran = 1;
     sld_req = 1;
     sst_req = 1;
-  } else if (tensorSplit.method == GeneralSplit) {
+  } else if (tensorSplit.method == PackedSplit) {
     if (tensorSplit.splitRank < 0) return false;
     num_iter = tensorSplit.volMbar*tensorSplit.numSplit;
     mlp = (float)launchConfig.numRegStorage;
@@ -1111,12 +1111,12 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
 
       if (isplit < num1) {
         // Round up split
-        countGeneralGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
           posMbarIn, posMbarOut, volMmk1, posMmkIn1, posMmkOut1,
           gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
       } else {
         // Round down split
-        countGeneralGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
           posMbarIn, posMbarOut, volMmk0, posMmkIn0, posMmkOut0,
           gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
       }
@@ -1128,7 +1128,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
     sld_req = 0;
     sst_req = 0;
     // Round down splits
-    countGeneralShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
+    countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
       volMmk0, hostMsh.begin(), hostMsh.begin() + tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
     sld_tran *= num0;
@@ -1141,7 +1141,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
       int sst_tran_tmp = 0;
       int sld_req_tmp = 0;
       int sst_req_tmp = 0;
-      countGeneralShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
+      countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
         volMmk1, hostMsh.begin() + tensorSplit.sizeMmk, hostMsh.begin() + tensorSplit.sizeMmk*2,
         sld_tran_tmp, sst_tran_tmp, sld_req_tmp, sst_req_tmp);
       sld_tran += sld_tran_tmp*num1;
@@ -1149,7 +1149,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
       sld_req += sld_req_tmp*num1;
       sst_req += sst_req_tmp*num1;
     }
-  } else if (tensorSplit.method == General) {
+  } else if (tensorSplit.method == Packed) {
     num_iter = tensorSplit.volMbar;
     // mlp = (float)launchConfig.numRegStorage;
     mlp = (float)(tensorSplit.volMmk) / (float)(launchConfig.numthread.x);
@@ -1182,7 +1182,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
       int posMbarIn = posMbarInV[0];
       int posMbarOut = posMbarOutV[0];
 
-      countGeneralGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+      countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
         posMbarIn, posMbarOut, tensorSplit.volMmk, posMmkIn, posMmkOut,
         gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
     }
@@ -1192,7 +1192,7 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
     sst_tran = 0;
     sld_req = 0;
     sst_req = 0;
-    countGeneralShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+    countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
       tensorSplit.volMmk, hostMsh.begin(), hostMsh.begin() + tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
   } else if (tensorSplit.method == Trivial) {
@@ -1249,12 +1249,12 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
   int numthread = launchConfig.numthread.x*launchConfig.numthread.y*launchConfig.numthread.z;
   // double cl_val = (double)cl_part/(double)std::max(1, cl_full + cl_part);
 
-  if (tensorSplit.method == General || tensorSplit.method == GeneralSplit) {
-    cycles = cyclesGeneral(prop, numthread, numActiveBlock, launchConfig.numRegStorage, 
+  if (tensorSplit.method == Packed || tensorSplit.method == PackedSplit) {
+    cycles = cyclesPacked(prop, numthread, numActiveBlock, launchConfig.numRegStorage, 
       gld_req, gst_req, gld_tran, gst_tran, sld_req, sst_req, sld_tran, sst_tran,
       num_iter, cl_full_l2, cl_part_l2);
-  } else if (tensorSplit.method == TiledSingleRank || tensorSplit.method == TiledLeadVolSame) {
-    cycles = cyclesTiled(tensorSplit.method == TiledLeadVolSame, prop, numthread, numActiveBlock, mlp, 
+  } else if (tensorSplit.method == Tiled || tensorSplit.method == TiledCopy) {
+    cycles = cyclesTiled(tensorSplit.method == TiledCopy, prop, numthread, numActiveBlock, mlp, 
       gld_req, gst_req, gld_tran, gst_tran, sld_req, sst_req, sld_tran, sst_tran,
       num_iter, cl_full_l2, cl_part_l2);
   }
@@ -1274,8 +1274,8 @@ void cuttPlan_t::activate() {
     }
   }
 
-  if (tensorSplit.method == General || tensorSplit.method == GeneralSplit) {
-    int MmkSize = (tensorSplit.method == General) ? tensorSplit.sizeMmk : tensorSplit.sizeMmk*2;
+  if (tensorSplit.method == Packed || tensorSplit.method == PackedSplit) {
+    int MmkSize = (tensorSplit.method == Packed) ? tensorSplit.sizeMmk : tensorSplit.sizeMmk*2;
     if (Mmk == NULL) {
       allocate_device<TensorConvInOut>(&Mmk, MmkSize);
       copy_HtoD<TensorConvInOut>(hostMmk.data(), Mmk, MmkSize, stream);
