@@ -129,7 +129,7 @@ public:
   // Rank of the tensor
   int rank;
 
-  // Size of elements in tensor
+  // Size of the tensor elements in bytes
   size_t sizeofType;
 
   TensorSplit tensorSplit;
@@ -183,7 +183,7 @@ public:
   void setStream(cudaStream_t stream_in);
   bool setup(const int rank_in, const int* dim, const int* permutation,
     const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in);
-  bool countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, const int numPosMbarSample=0);
+  bool countCycles(cudaDeviceProp& prop, const int numPosMbarSample=0);
   void activate();
   void nullDevicePointers();
 private:

@@ -219,7 +219,7 @@ void countPackedShTransactions(const int warpSize, const int bankWidth, const in
 //
 // Count number of global memory transactions for Tiled method
 //
-void countTiledGlTransactions(const bool leadVolSame,
+void countTiledGlTransactions(const bool isCopy,
   const int numPosMbarSample, const int volMm, const int volMk, const int volMbar,
   const int cIn, const int cOut, const int accWidth, const int cacheWidth,
   std::vector<TensorConvInOut>& hostMbar, const int sizeMbar,
@@ -253,7 +253,7 @@ void countTiledGlTransactions(const bool leadVolSame,
   // Number of corner tiles (0 or 1)
   int ntile_corn = (h > 0)*(v > 0);
 
-  if (leadVolSame) {
+  if (isCopy) {
     // Total number of memory level parallelism
     int mlp_tot = (TILEDIM/TILEROWS)*(ntile_full + ntile_horz) + ((v - 1)/TILEROWS + 1)*(ntile_vert + ntile_corn);
     // Average memory level parallelism per tile
@@ -306,7 +306,7 @@ void countTiledGlTransactions(const bool leadVolSame,
       int gst_tran_tmp = 0;
       int cl_full_tmp = 0;
       int cl_part_tmp = 0;
-      if (leadVolSame) {
+      if (isCopy) {
         for (int i=0;i < TILEDIM;i++) {
           int posIn  = posMbarIn + i*cIn;
           int posOut = posMbarOut + i*cOut;
@@ -342,7 +342,7 @@ void countTiledGlTransactions(const bool leadVolSame,
       int gst_tran_tmp = 0;
       int cl_full_tmp = 0;
       int cl_part_tmp = 0;
-      if (leadVolSame) {
+      if (isCopy) {
         for (int i=0;i < v;i++) {
           int posIn  = posMbarIn + i*cIn;
           int posOut = posMbarOut + i*cOut;
@@ -378,7 +378,7 @@ void countTiledGlTransactions(const bool leadVolSame,
       int gst_tran_tmp = 0;
       int cl_full_tmp = 0;
       int cl_part_tmp = 0;
-      if (leadVolSame) {
+      if (isCopy) {
         for (int i=0;i < v;i++) {
           int posIn  = posMbarIn + i*cIn;
           int posOut = posMbarOut + i*cOut;
@@ -411,7 +411,7 @@ void countTiledGlTransactions(const bool leadVolSame,
 
   }
   // Requests
-  if (leadVolSame) {
+  if (isCopy) {
     gld_req = num_iposMbar*( TILEDIM*ntile_full + TILEDIM*ntile_horz + v*ntile_vert + v*ntile_corn );
     gst_req = gld_req;
   } else {
@@ -420,7 +420,15 @@ void countTiledGlTransactions(const bool leadVolSame,
   }
 }
 
-void prepmodel5(cudaDeviceProp& prop, 
+struct GpuModelProp {
+  double base_dep_delay;
+  double base_mem_latency;
+  double sh_mem_latency;
+  double iter_cycles;
+  double fac;
+};
+
+void prepmodel5(cudaDeviceProp& prop, GpuModelProp& gpuModelProp,
   int nthread, int numActiveBlock, float mlp, int insts,
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran,
@@ -434,27 +442,6 @@ void prepmodel5(cudaDeviceProp& prop,
   // GPU clock in GHz
   double freq = (double)prop.clockRate/1.0e6;
   int warpSize = prop.warpSize;
-  // Delays & latencies in cycles
-  double base_dep_delay;
-  double base_mem_latency;
-  double sh_mem_latency;
-
-  if (prop.major <= 3) {
-    // Kepler
-    base_dep_delay = 14.0;
-    base_mem_latency = 358.0;
-    sh_mem_latency = 30.0;
-  } else if (prop.major <= 5) {
-    // Maxwell
-    base_dep_delay = 2.5;
-    base_mem_latency = 385.0;
-    sh_mem_latency = 5.0;
-  } else {
-    // Pascal and above
-    base_dep_delay = 2.5;
-    base_mem_latency = 385.0;
-    sh_mem_latency = 5.0;
-  } 
 
   int active_warps_per_SM = nthread*numActiveBlock/warpSize;
 
@@ -463,105 +450,117 @@ void prepmodel5(cudaDeviceProp& prop,
   double num_trans_per_request = ((double)gld_tran + (double)gst_tran + (double)cl_part) / (double)(gld_req + gst_req);
   double shnum_trans_per_request = (double)(sld_tran + sst_tran) / (double)(sld_req + sst_req);
 
-  // double mem_l = (1.0 + 0.5*part_cl)*base_mem_latency + (num_trans_per_request - 1.0) * base_dep_delay;
-  double mem_l = base_mem_latency + (num_trans_per_request - 1.0) * base_dep_delay;
+  double mem_l = gpuModelProp.base_mem_latency + (num_trans_per_request - 1.0) * gpuModelProp.base_dep_delay;
 
   // Avg. number of memory cycles per warp per iteration
-  mem_cycles = 1.4 * mem_l * insts;
-  sh_mem_cycles = 2.0 * shnum_trans_per_request * sh_mem_latency * insts;
+  mem_cycles = gpuModelProp.fac * mem_l * insts;
+  sh_mem_cycles = 2.0 * shnum_trans_per_request * gpuModelProp.sh_mem_latency * insts;
 
   // The final value of departure delay
-  double dep_delay = num_trans_per_request * base_dep_delay;
+  double dep_delay = num_trans_per_request * gpuModelProp.base_dep_delay;
 
   double bytes_per_request = num_trans_per_request*128;
 
-  delta_ll = base_dep_delay;
+  delta_ll = gpuModelProp.base_dep_delay;
   double BW_per_warp = freq*bytes_per_request/mem_l;
   double MWP_peak_BW = mem_BW/(BW_per_warp*active_SM);
   MWP = mem_l / dep_delay;
   MWP = std::min(MWP*mlp, std::min(MWP_peak_BW, (double)active_warps_per_SM));
 
-  delta_ll = base_dep_delay;
 }
 
-double cyclesPacked(cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
+double cyclesPacked(const bool isSplit, const size_t sizeofType, cudaDeviceProp& prop,
+  int nthread, int numActiveBlock, float mlp, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran, int num_iter, int cl_full, int cl_part) {
 
   int warps_per_block = nthread/32;
 
-  // double delta_ll, mem_cycles, MWP;
-  // prepmodel3(prop, nthread, numActiveBlock, (float)numRegStorage, numRegStorage,
-  //   gld_req + gst_req, gld_tran + gst_tran,
-  //   sld_req + sst_req, sld_tran + sst_tran, cl,
-  //   delta_ll, mem_cycles, MWP);
-  // double iter_cycles = 10.0*num_iter;
-  // double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
-  // double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
-  // double cycles = ldst_cycles + sync_cycles + iter_cycles;
-
-  // double delta_ll, mem_cycles, sh_mem_cycles, MWP;
-  // prepmodel4(false, prop, nthread, numActiveBlock, (float)numRegStorage, numRegStorage,
-  //   gld_req + gst_req, gld_tran + gst_tran,
-  //   sld_req + sst_req, sld_tran + sst_tran, cl,
-  //   delta_ll, mem_cycles, sh_mem_cycles, MWP);
-  // double ldst_cycles = 2.0*mem_cycles*warps_per_block/MWP;
-  // double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
-  // double iter_cycles = 20.0;
-  // double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
+  GpuModelProp gpuModelProp;
+  if (prop.major <= 3) {
+    // Kepler
+    gpuModelProp.base_dep_delay = 14.0;
+    gpuModelProp.base_mem_latency = 358.0;
+    gpuModelProp.sh_mem_latency = 30.0;
+    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.fac = 1.4;
+  } else if (prop.major <= 5) {
+    // Maxwell
+    gpuModelProp.base_dep_delay = 2.5;
+    gpuModelProp.base_mem_latency = 385.0;
+    gpuModelProp.sh_mem_latency = 5.0;
+    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.fac = 2.0;
+  } else {
+    // Pascal and above
+    gpuModelProp.base_dep_delay = 2.5;
+    gpuModelProp.base_mem_latency = 385.0;
+    gpuModelProp.sh_mem_latency = 5.0;
+    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.fac = 1.0;
+  } 
 
   double delta_ll, mem_cycles, sh_mem_cycles, MWP;
-  prepmodel5(prop, nthread, numActiveBlock, mlp, mlp,
+  prepmodel5(prop, gpuModelProp, nthread, numActiveBlock, mlp, mlp,
     gld_req, gst_req, gld_tran, gst_tran,
     sld_req, sst_req, sld_tran, sst_tran, cl_full, cl_part,
     delta_ll, mem_cycles, sh_mem_cycles, MWP);
   double ldst_cycles = mem_cycles*warps_per_block/MWP;
   double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
-  double iter_cycles = 50.0;
-  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
+  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + gpuModelProp.iter_cycles)*num_iter;
 
   return cycles;
 }
 
-double cyclesTiled(const bool leadVolSame, cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
+double cyclesTiled(const bool isCopy, const size_t sizeofType, cudaDeviceProp& prop,
+  int nthread, int numActiveBlock, float mlp, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran, int num_iter, int cl_full, int cl_part) {
 
   int warps_per_block = nthread/32;
 
-  // double delta_ll, mem_cycles, MWP;
-  // prepmodel3(prop, nthread, numActiveBlock, mlp, TILEDIM/TILEROWS,
-  //   gld_req + gst_req, gld_tran + gst_tran,
-  //   sld_req + sst_req, sld_tran + sst_tran, cl,
-  //   delta_ll, mem_cycles, MWP);
-  // double iter_cycles = 10.0*num_iter;
-  // double ldst_cycles = (2.0*mem_cycles*warps_per_block/MWP)*num_iter;
-  // double sync_cycles = delta_ll*2.0*(warps_per_block - 1)*num_iter;
-  // double cycles = ldst_cycles + sync_cycles + iter_cycles;
-
-  // double delta_ll, mem_cycles, sh_mem_cycles, MWP;
-  // prepmodel4(leadVolSame, prop, nthread, numActiveBlock, mlp, mlp,
-  //   gld_req + gst_req, gld_tran + gst_tran,
-  //   sld_req + sst_req, sld_tran + sst_tran, cl,
-  //   delta_ll, mem_cycles, sh_mem_cycles, MWP);
-  // double ldst_cycles = 2.0*mem_cycles*warps_per_block/MWP;
-  // double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
-  // double iter_cycles = 20.0;
-  // double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
+  GpuModelProp gpuModelProp;
+  if (prop.major <= 3) {
+    // Kepler
+    gpuModelProp.base_dep_delay = 14.0;
+    gpuModelProp.base_mem_latency = 358.0;
+    gpuModelProp.sh_mem_latency = 30.0;
+    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.fac = 1.4;
+  } else if (prop.major <= 5) {
+    // Maxwell
+    gpuModelProp.base_dep_delay = 2.5;
+    gpuModelProp.base_mem_latency = 385.0;
+    if (sizeofType == 4) {
+      gpuModelProp.sh_mem_latency = 20.0;
+      gpuModelProp.iter_cycles = 90.0;
+      gpuModelProp.fac = 2.0;
+    } else {
+      gpuModelProp.sh_mem_latency = 40.0;
+      gpuModelProp.iter_cycles = 110.0;
+      gpuModelProp.fac = 2.0;
+    }
+  } else {
+    // Pascal and above
+    gpuModelProp.base_dep_delay = 2.5;
+    gpuModelProp.base_mem_latency = 385.0;
+    gpuModelProp.sh_mem_latency = 5.0;
+    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.fac = 1.4;
+  } 
 
   double delta_ll, mem_cycles, sh_mem_cycles, MWP;
-  prepmodel5(prop, nthread, numActiveBlock, mlp, mlp,
+  prepmodel5(prop, gpuModelProp, nthread, numActiveBlock, mlp, mlp,
     gld_req, gst_req, gld_tran, gst_tran,
     sld_req, sst_req, sld_tran, sst_tran, cl_full, cl_part,
     delta_ll, mem_cycles, sh_mem_cycles, MWP);
   double ldst_cycles = mem_cycles*warps_per_block/MWP;
   double sync_cycles = 2.0*delta_ll*(warps_per_block - 1.0);
-  double iter_cycles = 50.0;
-  if (leadVolSame) {
+  if (isCopy) {
     sh_mem_cycles = 0.0;
     sync_cycles = 0.0;
   }
-  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + iter_cycles)*num_iter;
+  double cycles = (ldst_cycles + sh_mem_cycles + sync_cycles + gpuModelProp.iter_cycles)*num_iter;
 
   return cycles;
 }

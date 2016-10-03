@@ -49,11 +49,13 @@ void countTiledGlTransactions(const bool leadVolSame,
   std::vector<TensorConvInOut>& hostMbar, const int sizeMbar,
   int& num_iter, float& mlp, int& gld_tran, int& gst_tran, int& gld_req, int& gst_req, int& cl_full, int& cl_part);
 
-double cyclesPacked(cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
+double cyclesPacked(const bool isSplit, const size_t sizeofType, cudaDeviceProp& prop,
+  int nthread, int numActiveBlock, float mlp, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran, int num_iter, int cl_full, int cl_part);
 
-double cyclesTiled(const bool leadVolSame, cudaDeviceProp& prop, int nthread, int numActiveBlock, float mlp, 
+double cyclesTiled(const bool isCopy, const size_t sizeofType, cudaDeviceProp& prop,
+  int nthread, int numActiveBlock, float mlp, 
   int gld_req, int gst_req, int gld_tran, int gst_tran,
   int sld_req, int sst_req, int sld_tran, int sst_tran, int num_iter, int cl_full, int cl_part);
 

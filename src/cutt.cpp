@@ -105,7 +105,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 
   // Count cycles
   for (auto it=plans.begin();it != plans.end();it++) {
-    if (!it->countCycles(sizeofType, prop, 10)) return CUTT_INTERNAL_ERROR;
+    if (!it->countCycles(prop, 10)) return CUTT_INTERNAL_ERROR;
   }
 
   // Choose the plan
@@ -183,7 +183,7 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 
   // Count cycles
   // for (auto it=plans.begin();it != plans.end();it++) {
-  //   if (!it->countCycles(sizeofType, prop, 10)) return CUTT_INTERNAL_ERROR;
+  //   if (!it->countCycles(prop, 10)) return CUTT_INTERNAL_ERROR;
   // }
 
   // // Count the number of elements

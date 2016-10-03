@@ -1029,7 +1029,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
 //
 // Count the number of cycles using the MWP-CWP model
 //
-bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, const int numPosMbarSample) {
+bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
 
   // Number of elements that are loaded per memory transaction:
   // 128 bytes per transaction
@@ -1250,12 +1250,14 @@ bool cuttPlan_t::countCycles(const size_t sizeofType_in, cudaDeviceProp& prop, c
   // double cl_val = (double)cl_part/(double)std::max(1, cl_full + cl_part);
 
   if (tensorSplit.method == Packed || tensorSplit.method == PackedSplit) {
-    cycles = cyclesPacked(prop, numthread, numActiveBlock, launchConfig.numRegStorage, 
+    cycles = cyclesPacked(tensorSplit.method == PackedSplit, sizeofType, prop, numthread,
+      numActiveBlock, launchConfig.numRegStorage, 
       gld_req, gst_req, gld_tran, gst_tran, sld_req, sst_req, sld_tran, sst_tran,
       num_iter, cl_full_l2, cl_part_l2);
   } else if (tensorSplit.method == Tiled || tensorSplit.method == TiledCopy) {
-    cycles = cyclesTiled(tensorSplit.method == TiledCopy, prop, numthread, numActiveBlock, mlp, 
-      gld_req, gst_req, gld_tran, gst_tran, sld_req, sst_req, sld_tran, sst_tran,
+    cycles = cyclesTiled(tensorSplit.method == TiledCopy, sizeofType, prop, numthread,
+      numActiveBlock, mlp, gld_req, gst_req, gld_tran, gst_tran,
+      sld_req, sst_req, sld_tran, sst_tran,
       num_iter, cl_full_l2, cl_part_l2);
   }
 

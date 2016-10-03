@@ -65,8 +65,8 @@ bool bench3(int numElem);
 bool bench4();
 template <typename T> bool bench5(int numElem, int ratio);
 bool bench6();
-bool bench7();
-bool bench_input(std::vector<int>& dim, std::vector<int>& permutation);
+template <typename T> bool bench7();
+template <typename T> bool bench_input(std::vector<int>& dim, std::vector<int>& permutation);
 // bool bench_memcpy(int numElem);
 
 bool isTrivial(std::vector<int>& permutation);
@@ -187,12 +187,9 @@ int main(int argc, char *argv[]) {
   // }
 
   if (dimIn.size() > 0) {
-    if (elemsize == 4) {
-      printf("bench input not implemented for elemsize = 4\n");
-      goto fail;
-    }
-    if (!bench_input(dimIn, permutationIn)) goto fail;
-    goto benchOK;
+    bool ok = (elemsize == 4) ? bench_input<int>(dimIn, permutationIn) : bench_input<long long int>(dimIn, permutationIn);
+    if (ok) goto benchOK;
+    goto fail;
   }
 
   if (benchID == 3) {
@@ -226,7 +223,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (benchID/100 == 5) {
-    bool ok = (elemsize == 4) ? bench5<int>(196*MILLION, benchID % 100) : bench5<long long int>(200*MILLION, benchID % 100);
+    bool ok = (elemsize == 4) ? bench5<int>(200*MILLION, benchID % 100) : bench5<long long int>(200*MILLION, benchID % 100);
     if (ok) {
       printf("bench5:\n");
       for (auto it=timer->ranksBegin();it != timer->ranksEnd();it++) {
@@ -298,11 +295,8 @@ int main(int argc, char *argv[]) {
   }
 
   if (benchID == 7) {
-    if (elemsize == 4) {
-      printf("bench 7 not implemented for elemsize = 4\n");
-      goto fail;
-    }
-    if (bench7()) {
+    bool ok = (elemsize == 4) ? bench7<int>() : bench7<long long int>();
+    if (ok) {
       printf("bench7:\n");
       for (auto it=timer->ranksBegin();it != timer->ranksEnd();it++) {
         std::vector<double> v = timer->getData(*it);
@@ -449,8 +443,9 @@ bool bench3(int numElem) {
 bool bench4() {
 }
 
+template <typename T>
 bool bench_input(std::vector<int>& dim, std::vector<int>& permutation) {
-  if (!bench_tensor<long long int>(dim, permutation)) return false;
+  if (!bench_tensor<T>(dim, permutation)) return false;
   printf("dimensions\n");
   printVec(dim);
   printf("permutation\n");
@@ -673,6 +668,7 @@ bool bench6() {
 //
 // Benchmark 7: ranks 8 and 12 with 4 large dimensions and rest small dimensions
 //
+template <typename T>
 bool bench7() {
 
   // 199584000 elements
@@ -681,14 +677,14 @@ bool bench7() {
     std::vector<int> permutation(8);
     // Inverse
     for (int r=0;r < dim.size();r++) permutation[r] = dim.size() - 1 - r;
-    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    if (!bench_tensor<T>(dim, permutation)) return false;
     // Random
     for (int r=0;r < dim.size();r++) permutation[r] = r;
     for (int nsample=0;nsample < 500;nsample++) {
       std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
       if (!isTrivial(permutation)) {
-        if (!bench_tensor<long long int>(dim, permutation)) return false;
+        if (!bench_tensor<T>(dim, permutation)) return false;
       }
     }
   }
@@ -699,14 +695,14 @@ bool bench7() {
     std::vector<int> permutation(12);
     // Inverse
     for (int r=0;r < dim.size();r++) permutation[r] = dim.size() - 1 - r;
-    if (!bench_tensor<long long int>(dim, permutation)) return false;
+    if (!bench_tensor<T>(dim, permutation)) return false;
     // Random
     for (int r=0;r < dim.size();r++) permutation[r] = r;
     for (int nsample=0;nsample < 500;nsample++) {
       std::random_shuffle(dim.begin(), dim.end());
       std::random_shuffle(permutation.begin(), permutation.end());
       if (!isTrivial(permutation)) {
-        if (!bench_tensor<long long int>(dim, permutation)) return false;
+        if (!bench_tensor<T>(dim, permutation)) return false;
       }
     }
   }
