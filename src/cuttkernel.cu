@@ -26,25 +26,6 @@ SOFTWARE.
 #include "CudaUtils.h"
 #include "cuttkernel.h"
 
-//
-// Returns scalar tensor position. Each lane has the same p
-// NOTE: c and d on inactive warps must be 1 !!
-//
-__device__ __forceinline__
-int tensorPos(
-  const int p, const int rank, const int c, const int d, const int ct,
-  const int numLane=warpSize
-  ) {
-
-  int r = ((p/c) % d)*ct;
-#pragma unroll
-  for (int i=numLane/2;i >= 1;i/=2) {
-    r += __shfl_xor(r, i);
-  }
-  return r;
-
-}
-
 #define RESTRICT __restrict__
 
 //
@@ -364,6 +345,105 @@ __global__ void transposePackedSplit(
 
 }
 
+#if 1
+//
+// Transpose when the lead dimension is the same, e.g. (1, 2, 3) -> (1, 3, 2)
+//
+//  dim3 numthread(TILEDIM, TILEROWS, 1);
+//  dim3 numblock( ((plan.volMm-1)/TILEDIM+1)*((plan.volMkBar-1)/TILEDIM+1), 1, plan.volMbar);
+//
+template <typename T>
+__global__ void transposeTiledCopy(
+  const int numMm, const int volMbar, const int sizeMbar,
+  const int cuDimMk, const int cuDimMm,
+  const int2 tiledVol,
+  const TensorConvInOut* RESTRICT gl_Mbar,
+  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
+
+  const int warpLane = threadIdx.x & (warpSize - 1);
+  TensorConvInOut Mbar;
+  Mbar.c_in = 1;
+  Mbar.d_in = 1;
+  Mbar.c_out = 1;
+  Mbar.d_out = 1;
+  if (warpLane < sizeMbar) {
+    Mbar = gl_Mbar[warpLane];
+  }
+
+  const int bx = (blockIdx.x % numMm)*TILEDIM;
+  const int by = (blockIdx.x / numMm)*TILEDIM;
+
+  const int x = bx + threadIdx.x;
+  const int y = by + threadIdx.y;
+
+  const unsigned int mask = __ballot((y + warpLane < tiledVol.y))*(x < tiledVol.x);
+
+  const int posMinorIn = x + y*cuDimMk;
+  const int posMinorOut = x + y*cuDimMm;
+  const int posInAdd = TILEROWS*cuDimMk;
+  const int posOutAdd = TILEROWS*cuDimMm;
+
+  for (int posMbar=blockIdx.z;posMbar < volMbar;posMbar += gridDim.z)
+  {
+
+    // Compute global memory positions
+    int posMajorIn = ((posMbar/Mbar.c_in) % Mbar.d_in)*Mbar.ct_in;
+    int posMajorOut = ((posMbar/Mbar.c_out) % Mbar.d_out)*Mbar.ct_out;
+#pragma unroll
+    for (int i=16;i >= 1;i/=2) {
+      posMajorIn += __shfl_xor(posMajorIn, i);
+      posMajorOut += __shfl_xor(posMajorOut, i);
+    }
+    int posIn = posMajorIn + posMinorIn;
+    int posOut = posMajorOut + posMinorOut;
+
+    // Variables where values are stored
+    T val[TILEDIM/TILEROWS];
+
+    // Read global memory
+#pragma unroll
+    for (int j=0;j < TILEDIM;j += TILEROWS) {
+      // if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
+      if ((mask & (1 << j)) != 0) {
+        val[j/TILEROWS] = dataIn[posIn];
+      }
+      posIn += posInAdd;
+    }
+
+    // Write global memory
+#pragma unroll
+    for (int j=0;j < TILEDIM;j += TILEROWS) {
+      // if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
+      if ((mask & (1 << j)) != 0) {
+        dataOut[posOut] = val[j/TILEROWS];
+      }
+      posOut += posOutAdd;
+    }
+
+  }
+  
+}
+#else
+
+//
+// Returns scalar tensor position. Each lane has the same p
+// NOTE: c and d on inactive warps must be 1 !!
+//
+__device__ __forceinline__
+int tensorPos(
+  const int p, const int rank, const int c, const int d, const int ct,
+  const int numLane=warpSize
+  ) {
+
+  int r = ((p/c) % d)*ct;
+#pragma unroll
+  for (int i=numLane/2;i >= 1;i/=2) {
+    r += __shfl_xor(r, i);
+  }
+  return r;
+
+}
+
 //
 // Transpose when the lead dimension is the same, e.g. (1, 2, 3) -> (1, 3, 2)
 //
@@ -431,6 +511,7 @@ __global__ void transposeTiledCopy(
   }
   
 }
+#endif
 
 //######################################################################################
 //######################################################################################

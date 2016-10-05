@@ -518,6 +518,7 @@ bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation
     numMmMkSame++;
   }
   if (numMmMkSame >= 1) {
+    numMmMkSame = 1;
     TensorSplit ts;
     ts.method = TiledCopy;
     if (numMmMkSame < rank) {
@@ -669,6 +670,7 @@ bool createPlans(const int rank, const int* dim, const int* permutation,
   const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   size_t size0 = plans.size();
+  // if (!createTiledCopyPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
   if (!createTrivialPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
   // If Trivial plan was created, that's the only one we need
   if (size0 != plans.size()) return true;
@@ -679,7 +681,6 @@ bool createPlans(const int rank, const int* dim, const int* permutation,
   if (rank != rankRed) {
     if (!createPackedSplitPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
   }
-
   return true;
 }
 

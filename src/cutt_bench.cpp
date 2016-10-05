@@ -465,7 +465,6 @@ bool bench5(int numElemAvg, int ratio) {
   const int minDim = 2;
   const int maxDim = 16;
   for (int rank=2;rank <= 7;rank++) {
-  // for (int rank=3;rank <= 3;rank++) {
 
     for (int iter=0;iter < 500;iter++) {
 
