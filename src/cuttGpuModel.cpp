@@ -492,8 +492,8 @@ double cyclesPacked(const bool isSplit, const size_t sizeofType, cudaDeviceProp&
     // Maxwell
     gpuModelProp.base_dep_delay = 2.5;
     gpuModelProp.base_mem_latency = 385.0;
-    gpuModelProp.sh_mem_latency = 5.0;
-    gpuModelProp.iter_cycles = 50.0;
+    gpuModelProp.sh_mem_latency = 1.0;
+    gpuModelProp.iter_cycles = 220.0;
     gpuModelProp.fac = 2.0;
   } else {
     // Pascal and above
@@ -535,15 +535,9 @@ double cyclesTiled(const bool isCopy, const size_t sizeofType, cudaDeviceProp& p
     // Maxwell
     gpuModelProp.base_dep_delay = 2.5;
     gpuModelProp.base_mem_latency = 385.0;
-    if (sizeofType == 4) {
-      gpuModelProp.sh_mem_latency = 20.0;
-      gpuModelProp.iter_cycles = 90.0;
-      gpuModelProp.fac = 2.0;
-    } else {
-      gpuModelProp.sh_mem_latency = 40.0;
-      gpuModelProp.iter_cycles = 110.0;
-      gpuModelProp.fac = 2.0;
-    }
+    gpuModelProp.sh_mem_latency = 1.0;
+    gpuModelProp.iter_cycles = 220.0;
+    gpuModelProp.fac = 2.0;
   } else {
     // Pascal and above
     gpuModelProp.base_dep_delay = 2.5;
