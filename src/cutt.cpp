@@ -181,10 +181,10 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
     sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 #endif
 
-  // Count cycles
-  for (auto it=plans.begin();it != plans.end();it++) {
-    if (!it->countCycles(prop, 10)) return CUTT_INTERNAL_ERROR;
-  }
+  // // Count cycles
+  // for (auto it=plans.begin();it != plans.end();it++) {
+  //   if (!it->countCycles(prop, 10)) return CUTT_INTERNAL_ERROR;
+  // }
 
   // // Count the number of elements
   size_t numBytes = sizeofType;
@@ -218,7 +218,7 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 
   // bestPlan = plans.begin();
 
-  printMatlab(prop, plans, times);
+  // printMatlab(prop, plans, times);
   // findMispredictionBest(plans, times, bestPlan, bestTime);
   // bestPlan->print();
 
