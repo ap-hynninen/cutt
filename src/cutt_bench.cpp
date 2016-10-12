@@ -67,7 +67,7 @@ template <typename T> bool bench5(int numElem, int ratio);
 bool bench6();
 template <typename T> bool bench7();
 template <typename T> bool bench_input(std::vector<int>& dim, std::vector<int>& permutation);
-// bool bench_memcpy(int numElem);
+template <typename T> bool bench_memcpy(int numElem);
 
 bool isTrivial(std::vector<int>& permutation);
 void getRandomDim(double vol, std::vector<int>& dim);
@@ -217,6 +217,7 @@ int main(int argc, char *argv[]) {
         printf("permutation\n");
         printVec(permutation);
       }
+      goto benchOK;
     } else {
       goto fail;
     }
@@ -252,6 +253,7 @@ int main(int argc, char *argv[]) {
         printf("permutation\n");
         printVec(permutation);
       }
+      goto benchOK;
     } else {
       goto fail;
     }
@@ -289,6 +291,7 @@ int main(int argc, char *argv[]) {
         printf("permutation\n");
         printVec(permutation);
       }
+      goto benchOK;
     } else {
       goto fail;
     }
@@ -324,12 +327,18 @@ int main(int argc, char *argv[]) {
         printf("permutation\n");
         printVec(permutation);
       }
+      goto benchOK;
     } else {
       goto fail;
     }
   }
 
-  // if (!bench_memcpy(200*MILLION)) goto fail;
+  // Otherwise, do memcopy benchmark
+  {
+    bool ok = (elemsize == 4) ? bench_memcpy<int>(benchID) : bench_memcpy<long long int>(benchID);
+    if (ok) goto benchOK;
+    goto fail;
+  }
 
 benchOK:
   printf("bench OK\n");
@@ -809,60 +818,59 @@ void printVec(std::vector<int>& vec) {
   printf("\n");
 }
 
-/*
 //
 // Benchmarks memory copy. Returns bandwidth in GB/s
 //
+template <typename T>
 bool bench_memcpy(int numElem) {
 
   std::vector<int> dim(1, numElem);
   std::vector<int> permutation(1, 0);
 
   {
-    cuttTimer timer(8);
+    cuttTimer timer(sizeof(T));
     for (int i=0;i < 4;i++) {
-      set_device_array<double>((double *)dataOut, -1, numElem);
+      set_device_array<T>((T *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
-      scalarCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
+      scalarCopy<T>(numElem, (T *)dataIn, (T *)dataOut, 0);
       timer.stop();
-      // printf("%4.2lf GB/s\n", timer.GBs());
+      printf("%4.2lf GB/s\n", timer.GBs());
     }
-    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    if (!tester->checkTranspose<T>(1, dim.data(), permutation.data(), (T *)dataOut)) return false;
     printf("scalarCopy %lf GB/s\n", timer.getAverage(1));
   }
 
   {
-    cuttTimer timer(8);
+    cuttTimer timer(sizeof(T));
     for (int i=0;i < 4;i++) {
-      set_device_array<double>((double *)dataOut, -1, numElem);
+      set_device_array<T>((T *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
-      vectorCopy<double>(numElem, (double *)dataIn, (double *)dataOut, 0);
+      vectorCopy<T>(numElem, (T *)dataIn, (T *)dataOut, 0);
       timer.stop();
-      // printf("%4.2lf GB/s\n", timer.GBs());
+      printf("%4.2lf GB/s\n", timer.GBs());
     }
-    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    if (!tester->checkTranspose<T>(1, dim.data(), permutation.data(), (T *)dataOut)) return false;
     printf("vectorCopy %lf GB/s\n", timer.getAverage(1));
   }
 
   {
-    cuttTimer timer(8);
+    cuttTimer timer(sizeof(T));
     for (int i=0;i < 4;i++) {
-      set_device_array<double>((double *)dataOut, -1, numElem);
+      set_device_array<T>((T *)dataOut, -1, numElem);
       cudaCheck(cudaDeviceSynchronize());
       timer.start(dim, permutation);
-      memcpyFloat(numElem*2, (float *)dataIn, (float *)dataOut, 0);
+      memcpyFloat(numElem*sizeof(T)/sizeof(float), (float *)dataIn, (float *)dataOut, 0);
       timer.stop();
-      // printf("%4.2lf GB/s\n", timer.GBs());
+      printf("%4.2lf GB/s\n", timer.GBs());
     }
-    if (!tester->checkTranspose<long long int>(1, dim.data(), permutation.data(), dataOut)) return false;
+    if (!tester->checkTranspose<T>(1, dim.data(), permutation.data(), (T *)dataOut)) return false;
     printf("memcpyFloat %lf GB/s\n", timer.getAverage(1));
   }
 
   return true;
 }
-*/
 
 void printDeviceInfo() {
   int deviceID;

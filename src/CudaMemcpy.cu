@@ -126,6 +126,8 @@ void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stre
 // -----------------------------------------------------------------------------------
 
 // Explicit instances
-template void scalarCopy<double>(const int n, const double* data_in, double* data_out, cudaStream_t stream);
-template void vectorCopy<double>(const int n, double* data_in, double* data_out, cudaStream_t stream);
+template void scalarCopy<int>(const int n, const int* data_in, int* data_out, cudaStream_t stream);
+template void scalarCopy<long long int>(const int n, const long long int* data_in, long long int* data_out, cudaStream_t stream);
+template void vectorCopy<int>(const int n, int* data_in, int* data_out, cudaStream_t stream);
+template void vectorCopy<long long int>(const int n, long long int* data_in, long long int* data_out, cudaStream_t stream);
 void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream);
