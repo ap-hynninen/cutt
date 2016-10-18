@@ -426,6 +426,31 @@ struct GpuModelProp {
   double sh_mem_latency;
   double iter_cycles;
   double fac;
+
+  GpuModelProp(int major) {
+    if (major <= 3) {
+      // Kepler
+      base_dep_delay = 14.0;
+      base_mem_latency = 358.0;
+      sh_mem_latency = 11.0;
+      iter_cycles = 50.0;
+      fac = 2.0;
+    } else if (major <= 5) {
+      // Maxwell
+      base_dep_delay = 2.5;
+      base_mem_latency = 385.0;
+      sh_mem_latency = 1.0;
+      iter_cycles = 220.0;
+      fac = 2.0;
+    } else {
+      // Pascal and above
+      base_dep_delay = 2.5;
+      base_mem_latency = 485.0;
+      sh_mem_latency = 1.0;
+      iter_cycles = 260.0;
+      fac = 2.0;
+    } 
+  }
 };
 
 void prepmodel5(cudaDeviceProp& prop, GpuModelProp& gpuModelProp,
@@ -480,29 +505,7 @@ double cyclesPacked(const bool isSplit, const size_t sizeofType, cudaDeviceProp&
 
   int warps_per_block = nthread/32;
 
-  GpuModelProp gpuModelProp;
-  if (prop.major <= 3) {
-    // Kepler
-    gpuModelProp.base_dep_delay = 14.0;
-    gpuModelProp.base_mem_latency = 358.0;
-    gpuModelProp.sh_mem_latency = 11.0;
-    gpuModelProp.iter_cycles = 50.0;
-    gpuModelProp.fac = 2.0;
-  } else if (prop.major <= 5) {
-    // Maxwell
-    gpuModelProp.base_dep_delay = 2.5;
-    gpuModelProp.base_mem_latency = 385.0;
-    gpuModelProp.sh_mem_latency = 1.0;
-    gpuModelProp.iter_cycles = 220.0;
-    gpuModelProp.fac = 2.0;
-  } else {
-    // Pascal and above
-    gpuModelProp.base_dep_delay = 2.5;
-    gpuModelProp.base_mem_latency = 385.0;
-    gpuModelProp.sh_mem_latency = 5.0;
-    gpuModelProp.iter_cycles = 50.0;
-    gpuModelProp.fac = 1.0;
-  } 
+  GpuModelProp gpuModelProp(prop.major);
 
   double delta_ll, mem_cycles, sh_mem_cycles, MWP;
   prepmodel5(prop, gpuModelProp, nthread, numActiveBlock, mlp,
@@ -523,29 +526,7 @@ double cyclesTiled(const bool isCopy, const size_t sizeofType, cudaDeviceProp& p
 
   int warps_per_block = nthread/32;
 
-  GpuModelProp gpuModelProp;
-  if (prop.major <= 3) {
-    // Kepler
-    gpuModelProp.base_dep_delay = 14.0;
-    gpuModelProp.base_mem_latency = 358.0;
-    gpuModelProp.sh_mem_latency = 11.0;
-    gpuModelProp.iter_cycles = 50.0;
-    gpuModelProp.fac = 2.0;
-  } else if (prop.major <= 5) {
-    // Maxwell
-    gpuModelProp.base_dep_delay = 2.5;
-    gpuModelProp.base_mem_latency = 385.0;
-    gpuModelProp.sh_mem_latency = 1.0;
-    gpuModelProp.iter_cycles = 220.0;
-    gpuModelProp.fac = 2.0;
-  } else {
-    // Pascal and above
-    gpuModelProp.base_dep_delay = 2.5;
-    gpuModelProp.base_mem_latency = 385.0;
-    gpuModelProp.sh_mem_latency = 5.0;
-    gpuModelProp.iter_cycles = 50.0;
-    gpuModelProp.fac = 1.4;
-  }
+  GpuModelProp gpuModelProp(prop.major);
 
   double delta_ll, mem_cycles, sh_mem_cycles, MWP;
   prepmodel5(prop, gpuModelProp, nthread, numActiveBlock, mlp,

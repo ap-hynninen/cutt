@@ -26,6 +26,8 @@ SOFTWARE.
 #include "CudaUtils.h"
 #include "CudaMemcpy.h"
 
+const int numthread = 64;
+
 // -----------------------------------------------------------------------------------
 //
 // Copy using scalar loads and stores
@@ -41,9 +43,8 @@ __global__ void scalarCopyKernel(const int n, const T* data_in, T* data_out) {
 template <typename T>
 void scalarCopy(const int n, const T* data_in, T* data_out, cudaStream_t stream) {
 
-  int numthread = 256;
   int numblock = (n - 1)/numthread + 1;
-  numblock = min(65535, numblock);
+  // numblock = min(65535, numblock);
   // numblock = min(256, numblock);
 
   scalarCopyKernel<T> <<< numblock, numthread, 0, stream >>>
@@ -82,9 +83,8 @@ void vectorCopy(const int n, T* data_in, T* data_out, cudaStream_t stream) {
 
   const int vectorLength = 16/sizeof(T);
 
-  int numthread = 256;
   int numblock = (n/vectorLength - 1)/numthread + 1;
-  numblock = min(65535, numblock);
+  // numblock = min(65535, numblock);
   int shmemsize = 0;
 
   vectorCopyKernel<T> <<< numblock, numthread, shmemsize, stream >>>
@@ -102,24 +102,44 @@ template <int numElem>
 __global__ void memcpyFloatKernel(const int n, float4 *data_in, float4* data_out) {
   int index = threadIdx.x + numElem*blockIdx.x*blockDim.x;
   float4 a[numElem];
+#pragma unroll
   for (int i=0;i < numElem;i++) {
     if (index + i*blockDim.x < n) a[i] = data_in[index + i*blockDim.x];
   }
+#pragma unroll
   for (int i=0;i < numElem;i++) {
     if (index + i*blockDim.x < n) data_out[index + i*blockDim.x] = a[i];
+  }
+}
+
+template <int numElem>
+__global__ void memcpyFloatLoopKernel(const int n, float4 *data_in, float4* data_out) {
+  for (int index=threadIdx.x + blockIdx.x*numElem*blockDim.x;index < n;index += numElem*gridDim.x*blockDim.x)
+  {
+    float4 a[numElem];
+#pragma unroll
+    for (int i=0;i < numElem;i++) {
+      if (index + i*blockDim.x < n) a[i] = data_in[index + i*blockDim.x];
+    }
+#pragma unroll
+    for (int i=0;i < numElem;i++) {
+      if (index + i*blockDim.x < n) data_out[index + i*blockDim.x] = a[i];
+    }
   }
 }
 
 #define NUM_ELEM 2
 void memcpyFloat(const int n, float* data_in, float* data_out, cudaStream_t stream) {
 
-  int numthread = 256;
   int numblock = (n/(4*NUM_ELEM) - 1)/numthread + 1;
-  // numblock = min(65535, numblock);
   int shmemsize = 0;
-
   memcpyFloatKernel<NUM_ELEM> <<< numblock, numthread, shmemsize, stream >>>
   (n/4, (float4 *)data_in, (float4 *)data_out);
+
+  // int numblock = 64;
+  // int shmemsize = 0;
+  // memcpyFloatLoopKernel<NUM_ELEM> <<< numblock, numthread, shmemsize, stream >>>
+  // (n/4, (float4 *)data_in, (float4 *)data_out);
 
   cudaCheck(cudaGetLastError());
 }
