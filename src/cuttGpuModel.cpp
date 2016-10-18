@@ -444,7 +444,7 @@ struct GpuModelProp {
       fac = 2.0;
     } else {
       // Pascal and above
-      base_dep_delay = 2.5;
+      base_dep_delay = 2.8;
       base_mem_latency = 485.0;
       sh_mem_latency = 1.0;
       iter_cycles = 260.0;
