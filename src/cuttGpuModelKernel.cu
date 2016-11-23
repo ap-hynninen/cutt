@@ -151,7 +151,7 @@ void countCacheLines(int* segbuf, const int n, const int cacheWidth,
     int val = 0;
     if (i1 < n) val = ((segbuf[i] & lowbits) == (segbuf[i1] & lowbits));
     cl_full += val;
-    // Mark beginning of full cache lines with top bit set to 1
+    // Mark full cache lines with top bit set to 1
     if (val) {
       for (int j=0;j < cacheWidth;j++) {
         if (i + j < n) segbuf[i + j] |= topbit;

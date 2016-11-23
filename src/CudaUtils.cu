@@ -24,6 +24,9 @@ SOFTWARE.
 *******************************************************************************/
 
 #include <stdio.h>
+#ifdef ENABLE_NVTOOLS
+#include <nvToolsExtCuda.h>
+#endif
 #include "CudaUtils.h"
 
 //----------------------------------------------------------------------------------------
@@ -87,3 +90,31 @@ void copy_DtoH_T(const void *d_array, void *h_array, const size_t array_len, con
   cudaCheck(cudaMemcpy(h_array, d_array, sizeofT*array_len, cudaMemcpyDeviceToHost));
 }
 
+//----------------------------------------------------------------------------------------
+#ifdef ENABLE_NVTOOLS
+void gpuRangeStart(const char *range_name) {
+  static int color_id=0;
+  nvtxEventAttributes_t att;
+  att.version = NVTX_VERSION;
+  att.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+  att.colorType = NVTX_COLOR_ARGB;
+  if (color_id == 0) {
+    att.color = 0xFFFF0000;
+  } else if (color_id == 1) {
+    att.color = 0xFF00FF00;
+  } else if (color_id == 2) {
+    att.color = 0xFF0000FF;
+  } else if (color_id == 3) {
+    att.color = 0xFFFF00FF;
+  }
+  color_id++;
+  if (color_id > 3) color_id = 0;
+  att.messageType = NVTX_MESSAGE_TYPE_ASCII;
+  att.message.ascii = range_name;
+  nvtxRangePushEx(&att);
+}
+
+void gpuRangeStop() {
+  nvtxRangePop();
+}
+#endif

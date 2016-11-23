@@ -57,7 +57,11 @@ endif
 OPTLEV = -O3
 
 # Defines
-DEFS = 
+DEFS =
+
+ifdef ENABLE_NVTOOLS
+DEFS += -DENABLE_NVTOOLS
+endif
 
 OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/cuttGpuModel.o build/CudaUtils.o build/cuttTimer.o build/cuttGpuModelKernel.o
 OBJSTEST = build/cutt_test.o build/TensorTester.o build/CudaUtils.o build/cuttTimer.o
@@ -67,7 +71,7 @@ OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 #CUDAROOT = $(subst /bin/,,$(dir $(shell which nvcc)))
 CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
 
-CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS)
+CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS) $(OPTLEV) -march=native
 
 CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -Xptxas -dlcm=ca -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CUDA_CCFLAGS)" $(DEFS) -D_FORCE_INLINES
 
@@ -78,6 +82,9 @@ CUDA_LFLAGS = -L$(CUDAROOT)/lib64
 endif
 
 CUDA_LFLAGS += -Llib -lcudart -lcutt
+ifdef ENABLE_NVTOOLS
+CUDA_LFLAGS += -lnvToolsExt
+endif
 
 all: create_build lib/libcutt.a bin/cutt_test bin/cutt_bench
 

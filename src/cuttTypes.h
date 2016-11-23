@@ -24,6 +24,7 @@ SOFTWARE.
 *******************************************************************************/
 #ifndef CUTTTYPES_H
 #define CUTTTYPES_H
+#include "int_fastdiv.h"
 
 #define MAX_REG_STORAGE 8
 
@@ -33,12 +34,27 @@ struct TensorConv {
   int ct;
 };
 
+struct TensorConvFast {
+  int_fastdiv c;
+  int_fastdiv d;
+  int ct;
+};
+
 struct TensorConvInOut {
   int c_in;
   int d_in;
   int ct_in;
   int c_out;
   int d_out;
+  int ct_out;
+};
+
+struct TensorConvInOutFast {
+  int_fastdiv c_in;
+  int_fastdiv d_in;
+  int ct_in;
+  int_fastdiv c_out;
+  int_fastdiv d_out;
   int ct_out;
 };
 

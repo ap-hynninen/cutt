@@ -29,7 +29,19 @@ SOFTWARE.
 #include "cuttTypes.h"
 #include "cuttplan.h"
 
-void computePos(int vol0, int vol1,
+void computePos(const int vol0, const int vol1,
+  const TensorConvInOut* conv, const int numConv,
+  std::vector<int>& posIn, std::vector<int>& posOut);
+
+void computePos(const int* vol, const int numVol,
+  const TensorConvInOutFast* conv, const int numConv,
+  int* posIn, int* posOut);
+
+void computePos(const int vol0, const int vol1,
+  const TensorConvInOutFast* conv, const int numConv,
+  int* posIn, int* posOut);
+
+void computePosRef(int vol0, int vol1,
   std::vector<TensorConvInOut>::iterator it0, std::vector<TensorConvInOut>::iterator it1,
   std::vector<int>& posIn, std::vector<int>& posOut);
 
@@ -40,7 +52,11 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
   int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1);
 
 void countPackedShTransactions(const int warpSize, const int bankWidth, const int numthread,
-  const int volMmk, std::vector<TensorConv>::iterator Msh_it0, std::vector<TensorConv>::iterator Msh_it1,
+  const int volMmk, const TensorConv* msh, const int numMsh,
+  int& sld_tran, int& sst_tran, int& sld_req, int& sst_req);
+
+void countPackedShTransactionsRef(const int warpSize, const int bankWidth, const int numthread,
+  const int volMmk, const TensorConv* msh, const int numMsh,
   int& sld_tran, int& sst_tran, int& sld_req, int& sst_req);
 
 void countTiledGlTransactions(const bool leadVolSame,

@@ -69,6 +69,10 @@ cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeo
 cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
   cudaStream_t stream) {
 
+#ifdef ENABLE_NVTOOLS
+  gpuRangeStart("init");
+#endif
+
   // Check that input parameters are valid
   cuttResult inpCheck = cuttPlanCheckInput(rank, dim, permutation, sizeofType);
   if (inpCheck != CUTT_SUCCESS) return inpCheck;
@@ -100,13 +104,32 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   // // Create plans from non-reduced ranks
   // if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 
+#if 0
+  if (!cuttKernelDatabase(deviceID, prop)) return CUTT_INTERNAL_ERROR;
+#endif
+
+#ifdef ENABLE_NVTOOLS
+  gpuRangeStop();
+  gpuRangeStart("createPlans");
+#endif
+
   if (!createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
     sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+
+#ifdef ENABLE_NVTOOLS
+  gpuRangeStop();
+  gpuRangeStart("countCycles");
+#endif
 
   // Count cycles
   for (auto it=plans.begin();it != plans.end();it++) {
     if (!it->countCycles(prop, 10)) return CUTT_INTERNAL_ERROR;
   }
+
+#ifdef ENABLE_NVTOOLS
+  gpuRangeStop();
+  gpuRangeStart("rest");
+#endif
 
   // Choose the plan
   std::list<cuttPlan_t>::iterator bestPlan = choosePlanHeuristic(plans);
@@ -130,6 +153,10 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 
   // Insert plan into storage
   planStorage.insert( {*handle, plan} );
+
+#ifdef ENABLE_NVTOOLS
+  gpuRangeStop();
+#endif
 
   return CUTT_SUCCESS;
 }

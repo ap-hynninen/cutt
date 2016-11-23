@@ -29,13 +29,44 @@ SOFTWARE.
 #include <cstring>               // memcpy
 #include "cuttGpuModel.h"
 #include "cuttGpuModelKernel.h"
+#include "int_vector.h"
+
+// #define CALC_L1_CACHELINES
+
+//
+// Returns integer log2(a) rounded down
+//
+int ilog2(int a) {
+  int k = 0;
+  while (a >>= 1) k++;
+  return k;
+}
 
 //
 // Count number of global memory transactions per one request for potentially
-// scattered accesses to elements listed in pos
-// NOTE: Assumes pos is sorted
+// scattered accesses to elements listed in seg
+// NOTE: Assumes seg is sorted
 //
-int glTransactions(const int* pos, const int n, const int accWidth) {
+inline int glTransactions(const int* seg, const int n) {
+  int count = (n > 0);
+  for (int i=1;i < n;i++) {
+    count += (seg[i-1] != seg[i]);
+  }
+  return count;
+}
+
+inline int glTransactionsVec(const int* seg, const int n) {
+  int count = (n > 0);
+  for (int i=1;i < n;i++) {
+    count += (seg[i-1] != seg[i]);
+  }
+  return count;
+}
+
+//
+// Slower reference version of glTransactions
+//
+int glTransactionsRef(const int* pos, const int n, const int accWidth) {
   int count = 0;
   int iseg_prev = -1;
   for (int i=0;i < n;i++) {
@@ -59,15 +90,40 @@ int glTransactions(const int pos, const int n, const int accWidth) {
   return (seg1 - seg0 + 1);
 }
 
-
 //
 // Count number of full and partial cache-lines accessed for potentially
-// scattered accesses to elements listed in pos
+// scattered, but monotonically increasing accesses listed in pos
 //
 // cl_full = Number of full cache lines
 // cl_part = Number of partial cache lines
 //
-void countCacheLines(const int* pos, const int n, const int cacheWidth, int& cl_full, int& cl_part) {
+void countCacheLines(const int* seg, const int n, const int cacheWidth, int& cl_full, int& cl_part) {
+
+  cl_full = 0;
+  cl_part = 0;
+
+  int i = 0;
+  while (i < n) {
+    if (i + cacheWidth <= n && seg[i] == seg[i + cacheWidth - 1]) {
+      cl_full++;
+      i += cacheWidth;
+    } else {
+      // Count the first partial cache line and advance to next position
+      cl_part++;
+      i++;
+      // Loop until the next full cache line
+      while (i < n && seg[i] != ((i + cacheWidth <= n) ? seg[i + cacheWidth - 1] : -1)) {
+        cl_part += (seg[i] != seg[i-1]);
+        i++;
+      }
+    }
+  }
+}
+
+//
+// Slower reference version of countCacheLines
+//
+void countCacheLinesRef(const int* pos, const int n, const int cacheWidth, int& cl_full, int& cl_part) {
 
   cl_full = 0;
   cl_part = 0;
@@ -122,8 +178,211 @@ void countCacheLines(const int pos, const int n, const int cacheWidth, int& cl_f
 
 //
 // Compute memory element positions
+// Non-vectorized version
 //
-void computePos(int vol0, int vol1,
+void computePos(const int vol0, const int vol1,
+  const TensorConvInOut* conv, const int numConv,
+  std::vector<int>& posIn, std::vector<int>& posOut) {
+
+  int nvol = vol1 - vol0;
+  for (int i=0;i <= nvol;i++) {
+    int posInVal = 0;
+    int posOutVal = 0;
+    int j = i + vol0;
+    for (int k=0;k < numConv;k++) {
+      posInVal  += ((j / conv[k].c_in) % conv[k].d_in) * conv[k].ct_in;
+      posOutVal += ((j / conv[k].c_out) % conv[k].d_out) * conv[k].ct_out;
+    }
+    posIn[i] = posInVal;
+    posOut[i] = posOutVal;
+  }
+}
+
+//
+// Compute memory element positions
+//
+void computePos(const int vol0, const int vol1,
+  const TensorConvInOutFast* conv, const int numConv,
+  int* posIn, int* posOut) {
+
+#if 1
+  int nvol = vol1 - vol0;
+  for (int i=0;i <= nvol;i+=INT_VECTOR_LEN) {
+    int_vector posInVal(0);
+    int_vector posOutVal(0);
+    int jvec[INT_VECTOR_LEN];
+    for (int k=0;k < INT_VECTOR_LEN;k++) {
+      jvec[k] = i + vol0 + k;
+    }
+    int_vector j(jvec);
+    for (int k=0;k < numConv;k++) {
+      int_vector c_in_d(conv[k].c_in.d);
+      int_vector c_in_M(conv[k].c_in.M);
+      int_vector c_in_s(conv[k].c_in.s);
+      int_vector c_in_n_add_sign(conv[k].c_in.n_add_sign);
+
+      int_vector d_in_d(conv[k].d_in.d);
+      int_vector d_in_M(conv[k].d_in.M);
+      int_vector d_in_s(conv[k].d_in.s);
+      int_vector d_in_n_add_sign(conv[k].d_in.n_add_sign);
+
+      int_vector ct_in(conv[k].ct_in);
+
+      int_vector j_div_c_in = divfast(j, c_in_d, c_in_M, c_in_s, c_in_n_add_sign);
+      int_vector j_rem_d_in = remfast(j_div_c_in, d_in_d, d_in_M, d_in_s, d_in_n_add_sign);
+      posInVal += j_rem_d_in * ct_in;
+
+      //
+      int_vector c_out_d(conv[k].c_out.d);
+      int_vector c_out_M(conv[k].c_out.M);
+      int_vector c_out_s(conv[k].c_out.s);
+      int_vector c_out_n_add_sign(conv[k].c_out.n_add_sign);
+
+      int_vector d_out_d(conv[k].d_out.d);
+      int_vector d_out_M(conv[k].d_out.M);
+      int_vector d_out_s(conv[k].d_out.s);
+      int_vector d_out_n_add_sign(conv[k].d_out.n_add_sign);
+
+      int_vector ct_out(conv[k].ct_out);
+
+      int_vector j_div_c_out = divfast(j, c_out_d, c_out_M, c_out_s, c_out_n_add_sign);
+      int_vector j_rem_d_out = remfast(j_div_c_out, d_out_d, d_out_M, d_out_s, d_out_n_add_sign);
+      posOutVal += j_rem_d_out * ct_out;
+    }
+
+    int posInValVec[INT_VECTOR_LEN];
+    int posOutValVec[INT_VECTOR_LEN];
+    posInVal.copy(posInValVec);
+    posOutVal.copy(posOutValVec);
+
+#if 0
+    {
+      for (int k=0;k < INT_VECTOR_LEN;k++) {
+        int posInValRef = 0;
+        int posOutValRef = 0;
+        int j = i + vol0 + k;
+        for (int l=0;l < numConv;l++) {
+          posInValRef  += ((j / conv[l].c_in) % conv[l].d_in) * conv[l].ct_in;
+          posOutValRef += ((j / conv[l].c_out) % conv[l].d_out) * conv[l].ct_out;
+        }
+        if (posInValVec[k] != posInValRef || posOutValVec[k] != posOutValRef) {
+          printf("%d %d | %d %d\n", posInValVec[k], posInValRef, posOutValVec[k], posOutValRef);
+          exit(1);
+        }
+      }
+    }
+#endif
+    
+    for (int k=0;k < INT_VECTOR_LEN;k++) {
+      if (i + k <= nvol) {
+        posIn[i + k] = posInValVec[k];
+        posIn[i + k] = posInValVec[k];
+      }
+    }
+  }
+#else
+  int nvol = vol1 - vol0;
+  for (int i=0;i <= nvol;i++) {
+    int posInVal = 0;
+    int posOutVal = 0;
+    int j = i + vol0;
+    for (int k=0;k < numConv;k++) {
+      posInVal  += ((j / conv[k].c_in) % conv[k].d_in) * conv[k].ct_in;
+      posOutVal += ((j / conv[k].c_out) % conv[k].d_out) * conv[k].ct_out;
+    }
+    posIn[i] = posInVal;
+    posOut[i] = posOutVal;
+  }
+#endif
+}
+
+//
+// Compute memory element positions
+//
+void computePos(const int* vol, const int numVol,
+  const TensorConvInOutFast* conv, const int numConv,
+  int* posIn, int* posOut) {
+
+  for (int i=0;i < numVol;i+=INT_VECTOR_LEN) {
+    int_vector posInVal(0);
+    int_vector posOutVal(0);
+    int jvec[INT_VECTOR_LEN];
+    for (int k=0;k < INT_VECTOR_LEN;k++) {
+      jvec[k] = vol[std::min(i + k, numVol - 1)];
+    }
+    int_vector j(jvec);
+    for (int k=0;k < numConv;k++) {
+      int_vector c_in_d(conv[k].c_in.d);
+      int_vector c_in_M(conv[k].c_in.M);
+      int_vector c_in_s(conv[k].c_in.s);
+      int_vector c_in_n_add_sign(conv[k].c_in.n_add_sign);
+
+      int_vector d_in_d(conv[k].d_in.d);
+      int_vector d_in_M(conv[k].d_in.M);
+      int_vector d_in_s(conv[k].d_in.s);
+      int_vector d_in_n_add_sign(conv[k].d_in.n_add_sign);
+
+      int_vector ct_in(conv[k].ct_in);
+
+      int_vector j_div_c_in = divfast(j, c_in_d, c_in_M, c_in_s, c_in_n_add_sign);
+      int_vector j_rem_d_in = remfast(j_div_c_in, d_in_d, d_in_M, d_in_s, d_in_n_add_sign);
+      posInVal += j_rem_d_in * ct_in;
+
+      //
+      int_vector c_out_d(conv[k].c_out.d);
+      int_vector c_out_M(conv[k].c_out.M);
+      int_vector c_out_s(conv[k].c_out.s);
+      int_vector c_out_n_add_sign(conv[k].c_out.n_add_sign);
+
+      int_vector d_out_d(conv[k].d_out.d);
+      int_vector d_out_M(conv[k].d_out.M);
+      int_vector d_out_s(conv[k].d_out.s);
+      int_vector d_out_n_add_sign(conv[k].d_out.n_add_sign);
+
+      int_vector ct_out(conv[k].ct_out);
+
+      int_vector j_div_c_out = divfast(j, c_out_d, c_out_M, c_out_s, c_out_n_add_sign);
+      int_vector j_rem_d_out = remfast(j_div_c_out, d_out_d, d_out_M, d_out_s, d_out_n_add_sign);
+      posOutVal += j_rem_d_out * ct_out;
+    }
+
+    int posInValVec[INT_VECTOR_LEN];
+    int posOutValVec[INT_VECTOR_LEN];
+    posInVal.copy(posInValVec);
+    posOutVal.copy(posOutValVec);
+
+#if 0
+    {
+      for (int k=0;k < INT_VECTOR_LEN;k++) {
+        int posInValRef = 0;
+        int posOutValRef = 0;
+        int j = i + vol0 + k;
+        for (int l=0;l < numConv;l++) {
+          posInValRef  += ((j / conv[l].c_in) % conv[l].d_in) * conv[l].ct_in;
+          posOutValRef += ((j / conv[l].c_out) % conv[l].d_out) * conv[l].ct_out;
+        }
+        if (posInValVec[k] != posInValRef || posOutValVec[k] != posOutValRef) {
+          printf("%d %d | %d %d\n", posInValVec[k], posInValRef, posOutValVec[k], posOutValRef);
+          exit(1);
+        }
+      }
+    }
+#endif
+    
+    for (int k=0;k < INT_VECTOR_LEN;k++) {
+      if (i + k < numVol) {
+        posIn[i + k] = posInValVec[k];
+        posIn[i + k] = posInValVec[k];
+      }
+    }
+  }
+}
+
+//
+// Compute memory element positions
+// *** Slow reference version
+//
+void computePosRef(int vol0, int vol1,
   std::vector<TensorConvInOut>::iterator it0, std::vector<TensorConvInOut>::iterator it1,
   std::vector<int>& posIn, std::vector<int>& posOut) {
   int i=0;
@@ -139,6 +398,84 @@ void computePos(int vol0, int vol1,
   }
 }
 
+#if 0
+//
+// Count number of global memory transactions for Packed -method
+//
+void countPackedGlTransactions(const int warpSize, const int accWidth, const int cacheWidth,
+  const int numthread, const std::vector<int>& posMbarIn, const std::vector<int>& posMbarOut, const int volMmk, 
+  std::vector<int>& posMmkIn, std::vector<int>& posMmkOut,
+  int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
+  int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1) {
+
+  std::vector<int> readSeg(warpSize);
+  std::vector<int> writeSeg(warpSize);
+  std::vector<int> writeSegVolMmk(volMmk*INT_VECTOR_LEN);
+
+  const int accWidthShift = ilog2(accWidth);
+  const int cacheWidthShift = ilog2(cacheWidth);
+
+  int_vector gld_tran_d(0);
+  int_vector gst_tran_d(0);
+  int_vector cl_full_l2_d(0);
+  int_vector cl_part_l2_d(0);
+
+  int m = 0;
+  for (int l=0;l < posMbarIn.size();l += INT_VECTOR_LEN) {
+    for (int j00=0;j00 < volMmk;j00 += numthread) {
+      int n0 = std::min(volMmk, j00 + numthread);
+      for (int j0=j00;j0 < n0;j0+=warpSize) {
+        int n = std::min(warpSize, volMmk - j0);
+
+        int_vector segIn_prev(-1);
+        int_vector segOut_prev(-1);
+
+        for (int j1=0;j1 < n;j1++) {
+          int j = j0 + j1;
+          int_vector posIn  = int_vector(posMbarIn) + int_vector(posMmkIn[j]);
+          int_vector posOut = int_vector(posMbarOut) + int_vector(posMmkOut[j]);
+          int_vector segIn  = posIn >> accWidthShift;
+          int_vector segOut = posOut >> accWidthShift;
+          int_vector segOut2 = posOut >> cacheWidthShift;
+          gld_tran_d += (segIn != segIn_prev);
+          gst_tran_d += (segOut != segOut_prev);
+          segIn_prev  = segIn;
+          segOut_prev = segOut;
+          //
+          segOut2.copy(writeSegVolMmk.data() + m);
+          m += INT_VECTOR_LEN;
+        }
+
+        // Global memory transactions
+        // gld_tran += glTransactions(readSeg.data(), n);
+        // gst_tran += glTransactions(writeSeg.data(), n);
+        gld_req += INT_VECTOR_LEN;
+        gst_req += INT_VECTOR_LEN;
+      }
+    }
+
+    // Global write non-full cache-lines
+    int_vector cl_full_tmp, cl_part_tmp;
+    countCacheLines(writeSegVolMmk.data(), volMmk, cacheWidth, cl_full_tmp, cl_part_tmp);
+    cl_full_l2_d += cl_full_tmp;
+    cl_part_l2_d += cl_part_tmp;
+
+#ifdef CALC_L1_CACHELINES
+#error "CALC_L1_CACHELINES currently not functional"
+    countCacheLines(writePosVolMmk.data(), volMmk, accWidth, cl_full_tmp, cl_part_tmp);
+    cl_full_l1 += cl_full_tmp;
+    cl_part_l1 += cl_part_tmp;
+#endif
+  }
+
+  gld_tran += gld_tran_d.sum();
+  gst_tran += gst_tran_d.sum();
+
+  cl_full_l2 += cl_full_l2_d.sum();
+  cl_part_l2 += cl_part_l2_d.sum();
+}
+#endif
+
 //
 // Count number of global memory transactions for Packed -method
 //
@@ -148,40 +485,48 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
   int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
   int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1) {
 
-  std::vector<int> readPos(warpSize);
-  std::vector<int> writePos(warpSize);
-  std::vector<int> writePosVolMmk(volMmk);
+  std::vector<int> readSeg(warpSize);
+  std::vector<int> writeSeg(warpSize);
+  std::vector<int> writeSegVolMmk(volMmk);
+
+  const int accWidthShift = ilog2(accWidth);
+  const int cacheWidthShift = ilog2(cacheWidth);
 
   int m = 0;
   for (int j00=0;j00 < volMmk;j00+=numthread) {
     int n0 = std::min(volMmk, j00 + numthread);
     for (int j0=j00;j0 < n0;j0+=warpSize) {
       int n = std::min(warpSize, volMmk - j0);
+
       for (int j1=0;j1 < n;j1++) {
         int j = j0 + j1;
         int posIn  = posMbarIn + posMmkIn[j];
         int posOut = posMbarOut + posMmkOut[j];
-        readPos[j1] = posIn;
-        writePos[j1] = posOut;
-        writePosVolMmk[m] = posOut;
+        readSeg[j1] = posIn >> accWidthShift;
+        writeSeg[j1] = posOut >> accWidthShift;
+        writeSegVolMmk[m] = posOut >> cacheWidthShift;
         m++;
       }
+
       // Global memory transactions
-      gld_tran += glTransactions(readPos.data(), n, accWidth);
-      gst_tran += glTransactions(writePos.data(), n, accWidth);
+      gld_tran += glTransactions(readSeg.data(), n);
+      gst_tran += glTransactions(writeSeg.data(), n);
       gld_req++;
       gst_req++;
     }
   }
   // Global write non-full cache-lines
   int cl_full_tmp, cl_part_tmp;
-  countCacheLines(writePosVolMmk.data(), writePosVolMmk.size(), cacheWidth, cl_full_tmp, cl_part_tmp);
+  countCacheLines(writeSegVolMmk.data(), volMmk, cacheWidth, cl_full_tmp, cl_part_tmp);
   cl_full_l2 += cl_full_tmp;
   cl_part_l2 += cl_part_tmp;
 
-  countCacheLines(writePosVolMmk.data(), writePosVolMmk.size(), accWidth, cl_full_tmp, cl_part_tmp);
+#ifdef CALC_L1_CACHELINES
+#error "CALC_L1_CACHELINES currently not functional"
+  countCacheLines(writePosVolMmk.data(), volMmk, accWidth, cl_full_tmp, cl_part_tmp);
   cl_full_l1 += cl_full_tmp;
   cl_part_l1 += cl_part_tmp;
+#endif
 
 }
 
@@ -189,8 +534,73 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
 // Count numnber of shared memory transactions for Packed -method
 //
 void countPackedShTransactions(const int warpSize, const int bankWidth, const int numthread,
-  const int volMmk, std::vector<TensorConv>::iterator Msh_it0, std::vector<TensorConv>::iterator Msh_it1,
+  const int volMmk, const TensorConv* msh, const int numMsh,
   int& sld_tran, int& sst_tran, int& sld_req, int& sst_req) {
+
+  const int bankWidthMask = bankWidth - 1;
+
+  // Pre-compute magic numbers for fast integer division and modulo operations
+  std::vector<TensorConvFast> mshFast(numMsh);
+  for (int i=0;i < numMsh;i++) {
+    mshFast[i].c   = msh[i].c;
+    mshFast[i].d   = msh[i].d;
+    mshFast[i].ct  = msh[i].ct;
+  }
+
+  for (int j00=0;j00 < volMmk;j00+=numthread) {
+    int n0 = std::min(volMmk, j00 + numthread);
+    for (int j0=j00;j0 < n0;j0+=warpSize) {
+      // Number of accesses for each bank
+      std::vector<int> numAccess(warpSize, 0);
+      int maxNumAccess = 0;
+      int n = std::min(warpSize, volMmk - j0);
+      for (int j1=0;j1 < n;j1+=INT_VECTOR_LEN) {
+        int jvec[INT_VECTOR_LEN];
+        for (int k=0;k < INT_VECTOR_LEN;k++) {
+          jvec[k] = j0 + j1 + k;
+        }
+        int_vector j(jvec);
+        int_vector pos(0);
+        for (int k=0;k < numMsh;k++) {
+          int_vector c_d(mshFast[k].c.d);
+          int_vector c_M(mshFast[k].c.M);
+          int_vector c_s(mshFast[k].c.s);
+          int_vector c_n_add_sign(mshFast[k].c.n_add_sign);
+          int_vector d_d(mshFast[k].d.d);
+          int_vector d_M(mshFast[k].d.M);
+          int_vector d_s(mshFast[k].d.s);
+          int_vector d_n_add_sign(mshFast[k].d.n_add_sign);
+          int_vector ct(mshFast[k].ct);
+
+          int_vector j_div_c = divfast(j, c_d, c_M, c_s, c_n_add_sign);
+          int_vector j_rem_d = remfast(j_div_c, d_d, d_M, d_s, d_n_add_sign);
+          pos += j_rem_d * ct;
+        }
+        int posvec[INT_VECTOR_LEN];
+        pos.copy(posvec);
+        int nleft = std::min(n - j1, INT_VECTOR_LEN);
+        for (int k=0;k < nleft;k++) {
+          int bank = posvec[k] & bankWidthMask;
+          maxNumAccess = std::max(maxNumAccess, ++numAccess[bank]);
+        }
+      }
+      sld_tran += maxNumAccess;
+      sst_tran++;
+      sld_req++;
+      sst_req++;
+    }
+  }
+}
+
+//
+// Count numnber of shared memory transactions for Packed -method
+// *** Slow reference version
+//
+void countPackedShTransactionsRef(const int warpSize, const int bankWidth, const int numthread,
+  const int volMmk, const TensorConv* msh, const int numMsh,
+  int& sld_tran, int& sst_tran, int& sld_req, int& sst_req) {
+
+  const int bankWidthMask = bankWidth - 1;
 
   for (int j00=0;j00 < volMmk;j00+=numthread) {
     int n0 = std::min(volMmk, j00 + numthread);
@@ -202,10 +612,10 @@ void countPackedShTransactions(const int warpSize, const int bankWidth, const in
       for (int j1=0;j1 < n;j1++) {
         int j = j0 + j1;
         int pos = 0;
-        for (auto it=Msh_it0;it != Msh_it1;it++) {
-          pos += ((j / it->c) % it->d) * it->ct;
+        for (int k=0;k < numMsh;k++) {
+          pos += ((j / msh[k].c) % msh[k].d) * msh[k].ct;
         }
-        int bank = pos % bankWidth;
+        int bank = pos & bankWidthMask;
         maxNumAccess = std::max(maxNumAccess, ++numAccess[bank]);
       }
       sld_tran += maxNumAccess;
@@ -273,7 +683,8 @@ void countTiledGlTransactions(const bool isCopy,
 
     std::vector<int> posMbarInV(1);
     std::vector<int> posMbarOutV(1);
-    computePos(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + sizeMbar, posMbarInV, posMbarOutV);
+    computePos(posMbar, posMbar, hostMbar.data(), sizeMbar, posMbarInV, posMbarOutV);
+    // computePos(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + sizeMbar, posMbarInV, posMbarOutV);
     int posMbarIn = posMbarInV[0];
     int posMbarOut = posMbarOutV[0];
 
@@ -729,22 +1140,49 @@ bool testCounters(const int warpSize, const int accWidth, const int cacheWidth) 
 {2,2,2},{2,2,2},{2,2,2},{2,2,2},{2,3,1},{2,3,2},{2,3,2},{2,3,2},{2,3,2},{2,3,2},{2,3,2},{2,3,2}
 };
 
+const int shTestData[138][3] = 
+{{32, 6, 1},{1, 6, 1},{96, 180, 2},{1, 6, 1},{6, 30, 6},{960, 4680, 3},{1, 6, 1},{6, 30, 6},
+{180, 26, 180},{96, 84, 2},{1, 6, 1},{6, 14, 6},{640, 2520, 3},{1, 6, 1},{6, 30, 84},
+{180, 14, 6},{160, 756, 3},{1, 6, 1},{6, 9, 84},{54, 14, 6},{960, 4212, 4},{1, 6, 1},
+{6, 3, 54},{18, 26, 162},{468, 9, 6},{960, 5616, 4},{1, 6, 1},{6, 4, 54},{24, 26, 216},
+{624, 9, 6},{576, 2808, 4},{1, 6, 1},{6, 2, 54},{12, 26, 108},{312, 9, 6},{864, 2808, 4},
+{1, 6, 1},{6, 2, 54},{12, 26, 108},{312, 9, 6},{864, 4212, 4},{1, 6, 1},{6, 3, 54},
+{18, 26, 162},{468, 9, 6},{896, 4368, 4},{1, 6, 1},{6, 2, 84},{12, 26, 168},{312, 14, 6},
+{1024, 5292, 4},{1, 6, 1},{6, 7, 756},{42, 9, 84},{378, 14, 6},{1024, 6048, 4},{1, 6, 1},
+{6, 8, 756},{48, 9, 84},{432, 14, 6},{256, 1512, 4},{1, 6, 1},{6, 2, 756},{12, 9, 84},
+{108, 14, 6},{768, 1512, 4},{1, 6, 1},{6, 2, 756},{12, 9, 84},{108, 14, 6},{768, 2268, 4},
+{1, 6, 1},{6, 3, 756},{18, 9, 84},{162, 14, 6},{1024, 5994, 3},{1, 6, 1},{6, 111, 54},
+{666, 9, 6},{1024, 6048, 3},{1, 6, 1},{6, 112, 54},{672, 9, 6},{128, 594, 3},{1, 6, 1},
+{6, 11, 54},{66, 9, 6},{128, 648, 3},{1, 6, 1},{6, 12, 54},{72, 9, 6},{992, 5940, 4},
+{1, 6, 1},{6, 5, 54},{30, 9, 6},{270, 22, 270},{960, 3564, 4},{1, 6, 1},{6, 3, 54},
+{18, 9, 6},{162, 22, 162},{960, 4752, 4},{1, 6, 1},{6, 4, 54},{24, 9, 6},{216, 22, 216},
+{1024, 5880, 3},{1, 6, 1},{6, 70, 84},{420, 14, 6},{1024, 5964, 3},{1, 6, 1},{6, 71, 84},
+{426, 14, 6},{192, 1008, 3},{1, 6, 1},{6, 12, 84},{72, 14, 6},{1024, 5292, 4},{1, 6, 1},
+{6, 7, 756},{42, 9, 84},{378, 14, 6},{1024, 6048, 4},{1, 6, 1},{6, 8, 756},{48, 9, 84},
+{432, 14, 6},{928, 3780, 4},{1, 6, 1},{6, 5, 756},{30, 9, 84},{270, 14, 6},{928, 4536, 4},
+{1, 6, 1},{6, 6, 756},{36, 9, 84},{324, 14, 6}};
+
+  const int accWidthShift = ilog2(accWidth);
+  const int cacheWidthShift = ilog2(cacheWidth);
+
   //
   // Test array version
   //
   for (int i=0;i < numArray;i++) {
     int n = 0;
-    while (posData[i][n] != -1 && n < warpSize) n++;
-    int tran = glTransactions(posData[i], n, accWidth);
+    while (n < warpSize && posData[i][n] != -1) n++;
+    std::vector<int> segData(warpSize);
+    for (int j=0;j < n;j++) segData[j] = posData[i][j] >> accWidthShift;
+    int tran = glTransactions(segData.data(), n);
+    // int tran = glTransactions(posData[i], n, accWidth);
     int cl_full;
     int cl_part;
-    countCacheLines(posData[i], n, cacheWidth, cl_full, cl_part);
+    for (int j=0;j < n;j++) segData[j] = posData[i][j] >> cacheWidthShift;
+    countCacheLines(segData.data(), n, cacheWidth, cl_full, cl_part);
+    // countCacheLines(posData[i], n, cacheWidth, cl_full, cl_part);
     bool ok = true;
-    if (accWidth == 16) {
-      ok = check_results(tran, cl_full, cl_part, arrayResultsDouble[i]);
-    } else {
-      ok = check_results(tran, cl_full, cl_part, arrayResultsFloat[i]);
-    }
+    const int *results = (accWidth == 16) ? arrayResultsDouble[i] : arrayResultsFloat[i];
+    ok = check_results(tran, cl_full, cl_part, results);
     if (!ok) {
       for (int j=0;j < warpSize;j++) {
         int pos = posData[i][j];
@@ -755,7 +1193,11 @@ bool testCounters(const int warpSize, const int accWidth, const int cacheWidth) 
         }
       }
       printf("\n");
-      printf("n %d tran %d cl %d %d\n", n, tran, cl_full, cl_part);
+      for (int j=0;j < n;j++) {
+        printf("%d ", segData[j]);
+      }
+      printf("\n");
+      printf("n %d | tran %d cl %d %d | tran %d cl %d %d\n", n, tran, cl_full, cl_part, results[0], results[1], results[2]);
       return false;
     }
   }
@@ -780,10 +1222,15 @@ bool testCounters(const int warpSize, const int accWidth, const int cacheWidth) 
 
         memcpy(&gpuPosData[(numArray + i)*warpSize], posvec.data(), warpSize*sizeof(int));
 
-        int tran2 = glTransactions(posvec.data(), n, accWidth);
+        std::vector<int> segvec(warpSize);
+        for (int i=0;i < n;i++) segvec[i] = posvec[i] >> accWidthShift;
+
+        int tran2 = glTransactions(segvec.data(), n);
+        // int tran2 = glTransactions(posvec.data(), n, accWidth);
         int cl_full2;
         int cl_part2;
-        countCacheLines(posvec.data(), n, cacheWidth, cl_full2, cl_part2);
+        for (int i=0;i < n;i++) segvec[i] = posvec[i] >> cacheWidthShift;
+        countCacheLines(segvec.data(), n, cacheWidth, cl_full2, cl_part2);
 
         bool ok = true;
         if (accWidth == 16) {
@@ -801,6 +1248,44 @@ bool testCounters(const int warpSize, const int accWidth, const int cacheWidth) 
         }
 
       }
+    }
+  }
+
+  //
+  // Test shared memory transaction counter.
+  //
+  {
+    int i = 0;
+    while (i < 138) {
+      int testInd = i;
+      int numthread = shTestData[i][0];
+      int volMmk    = shTestData[i][1];
+      int numMsh    = shTestData[i][2];
+      i++;
+      std::vector<TensorConv> msh(numMsh);
+      for (int j=0;j < numMsh;j++) {
+        msh[j].c  = shTestData[i][0];
+        msh[j].d  = shTestData[i][1];
+        msh[j].ct = shTestData[i][2];
+        i++;
+      }
+
+      int sld_tran_ref = 0, sst_tran_ref = 0, sld_req_ref = 0, sst_req_ref = 0;
+      countPackedShTransactionsRef(warpSize, warpSize, numthread, volMmk, msh.data(), numMsh,
+        sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+
+      int sld_tran = 0, sst_tran = 0, sld_req = 0, sst_req = 0;
+      countPackedShTransactions(warpSize, warpSize, numthread, volMmk, msh.data(), numMsh,
+        sld_tran, sst_tran, sld_req, sst_req);
+
+      if (sld_tran != sld_tran_ref || sst_tran != sst_tran_ref ||
+        sld_req != sld_req_ref || sst_req != sst_req_ref) {
+        printf("Error in countPackedShTransactions. Test %d\n", testInd);
+        printf("Ref: %d %d %d %d\n", sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+        printf("Vec: %d %d %d %d\n", sld_tran, sst_tran, sld_req, sst_req);
+        return false;
+      }
+
     }
   }
 

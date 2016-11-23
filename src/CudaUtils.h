@@ -121,4 +121,9 @@ void copy_DtoH_sync(const T *d_array, T *h_array, const size_t array_len) {
   copy_DtoH_T(d_array, h_array, array_len, sizeof(T));
 }
 
+#ifdef ENABLE_NVTOOLS
+void gpuRangeStart(const char *range_name);
+void gpuRangeStop();
+#endif
+
 #endif // CUDAUTILS_H

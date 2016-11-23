@@ -28,6 +28,10 @@ SOFTWARE.
 
 void cuttKernelSetSharedMemConfig();
 
+#if 0
+bool cuttKernelDatabase(int deviceID, cudaDeviceProp& prop);
+#endif
+
 int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
   LaunchConfig& lc);
 
