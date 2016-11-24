@@ -57,10 +57,10 @@ Options:
 Performance
 ===========
 
-cuTT was designed with performance as the main goal. Here are performance benchmarks for a random set of tensors with 200M `double` elements with ranks 2 to 8 and 15. The benchmarks were run with the measurement flag on
+cuTT was designed with performance as the main goal. Here are performance benchmarks for a random set of tensors with 200M `double` elements with ranks 2 to 7. The benchmarks were run with the measurement flag on
 (cutt_bench -measure)
 
-![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k20x.png)
+![k20x](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/k20x_bench.png)
 
 <!-- ![k40m](https://raw.githubusercontent.com/ap-hynninen/cutt/master/doc/bw_k40m_july1_2016.png)
  -->
