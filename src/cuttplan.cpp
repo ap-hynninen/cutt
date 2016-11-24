@@ -1035,12 +1035,7 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
   // Pre-compute magic numbers for fast integer division
   std::vector<TensorConvInOutFast> hostMmkFast(hostMmk.size());
   for (int i=0;i < hostMmk.size();i++) {
-    hostMmkFast[i].c_in   = hostMmk[i].c_in;
-    hostMmkFast[i].d_in   = hostMmk[i].d_in;
-    hostMmkFast[i].ct_in  = hostMmk[i].ct_in;
-    hostMmkFast[i].c_out  = hostMmk[i].c_out;
-    hostMmkFast[i].d_out  = hostMmk[i].d_out;
-    hostMmkFast[i].ct_out = hostMmk[i].ct_out;
+    hostMmkFast[i] = TensorConvInOutFast::make_TensorConvInOutFast(hostMmk[i]);
   }
 
   // Number of elements that are loaded per memory transaction:
@@ -1115,11 +1110,26 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     gpuRangeStart("computePos");
 #endif
     computePos(0, volMmk0 - 1, hostMmkFast.data(), tensorSplit.sizeMmk, posMmkIn0.data(), posMmkOut0.data());
+    // {
+    //   std::vector<int> posMmkIn0Ref(volMmk0);
+    //   std::vector<int> posMmkOut0Ref(volMmk0);
+    //   computePosRef(0, volMmk0 - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
+    //     posMmkIn0Ref, posMmkOut0Ref);
+    //   for (int i=0;i < volMmk0;i++) {
+    //     if (posMmkIn0[i] != posMmkIn0Ref[i] || posMmkOut0[i] != posMmkOut0Ref[i]) {
+    //       printf("%d %d | %d %d | i %d volMmk0 %d sizeMmk %d\n", posMmkIn0[i], posMmkIn0Ref[i], posMmkOut0[i], posMmkOut0Ref[i],
+    //         i, volMmk0, tensorSplit.sizeMmk);
+    //       for (int j=0;j < tensorSplit.sizeMmk;j++) {
+    //         printf("%d %d %d %d %d %d\n", hostMmk[j].c_in, hostMmk[j].d_in, hostMmk[j].ct_in,
+    //           hostMmk[j].c_out, hostMmk[j].d_out, hostMmk[j].ct_out);
+    //       }
+    //       return false;
+    //     }
+    //   }
+    // }
 #ifdef ENABLE_NVTOOLS
     gpuRangeStop();
 #endif
-    // computePos(0, volMmk0 - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
-    //   posMmkIn0, posMmkOut0);
     std::vector<int> posMmkIn1(volMmk1);
     std::vector<int> posMmkOut1(volMmk1);
     if (num1 > 0) {
@@ -1128,11 +1138,11 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
 #endif
       computePos(0, volMmk1 - 1, hostMmkFast.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
         posMmkIn1.data(), posMmkOut1.data());
+      // computePosRef(0, volMmk1 - 1, hostMmk.begin() + tensorSplit.sizeMmk, hostMmk.begin() + tensorSplit.sizeMmk*2,
+      //   posMmkIn1, posMmkOut1);
 #ifdef ENABLE_NVTOOLS
       gpuRangeStop();
 #endif
-      // computePos(0, volMmk1 - 1, hostMmk.begin() + tensorSplit.sizeMmk, hostMmk.begin() + tensorSplit.sizeMmk*2,
-      //   posMmkIn1, posMmkOut1);
     }
 
     int num_ipos = (numPosMbarSample == 0) ? tensorSplit.volMbar*tensorSplit.numSplit : numPosMbarSample;
@@ -1153,7 +1163,7 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
       std::vector<int> posMbarInV(1);
       std::vector<int> posMbarOutV(1);
       computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
-      // computePos(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
+      // computePosRef(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
       int posMbarIn = posMbarInV[0] + p0*cuDimMm;
       int posMbarOut = posMbarOutV[0] + p0*cuDimMk;
 
@@ -1184,10 +1194,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
       volMmk0, hostMsh.data(), tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
-    // printf("{%d, %d, %d},", launchConfig.numthread.x, volMmk0, tensorSplit.sizeMmk);
-    // for (int i=0;i < tensorSplit.sizeMmk;i++) {
-    //   printf("{%d, %d, %d},", hostMsh[i].c, hostMsh[i].d, hostMsh[i].ct);
-    // }
     sld_tran *= num0;
     sst_tran *= num0;
     sld_req *= num0;
@@ -1201,10 +1207,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
       countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
         volMmk1, hostMsh.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
         sld_tran_tmp, sst_tran_tmp, sld_req_tmp, sst_req_tmp);
-      // printf("{%d, %d, %d},", launchConfig.numthread.x, volMmk1, tensorSplit.sizeMmk);
-      // for (int i=0;i < tensorSplit.sizeMmk;i++) {
-      //   printf("{%d, %d, %d},", hostMsh[i+ tensorSplit.sizeMmk].c, hostMsh[i+ tensorSplit.sizeMmk].d, hostMsh[i+ tensorSplit.sizeMmk].ct);
-      // }
       sld_tran += sld_tran_tmp*num1;
       sst_tran += sst_tran_tmp*num1;
       sld_req += sld_req_tmp*num1;
@@ -1236,9 +1238,10 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     // Pre-compute posMmkIn and posMmkOut
     std::vector<int> posMmkIn(tensorSplit.volMmk);
     std::vector<int> posMmkOut(tensorSplit.volMmk);
+
     computePos(0, tensorSplit.volMmk - 1, hostMmkFast.data(), tensorSplit.sizeMmk,
       posMmkIn.data(), posMmkOut.data());
-    // computePos(0, tensorSplit.volMmk - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
+    // computePosRef(0, tensorSplit.volMmk - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
     //   posMmkIn, posMmkOut);
 
     int num_ipos = (numPosMbarSample == 0) ? tensorSplit.volMbar : numPosMbarSample;
@@ -1248,26 +1251,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     gpuRangeStart("Packed: loop");
 #endif
 
-#if 0
-    std::vector<int> posMbar(num_ipos);
-    for (int iposMbar=0;iposMbar < num_ipos;iposMbar++) {
-      posMbar[iposMbar] = (numPosMbarSample == 0) ? iposMbar : distribution(generator);
-    }
-    std::vector<int> posMbarIn(num_ipos);
-    std::vector<int> posMbarOut(num_ipos);
-
-    gpuRangeStart("computePos");
-
-    computePos(posMbar.data(), posMbar.size(), hostMbarFast.data(), tensorSplit.sizeMbar, posMbarIn, posMbarOut);
-
-    gpuRangeStop();
-    gpuRangeStart("countPackedGlTransactions");
-
-    countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
-      posMbarIn, posMbarOut, tensorSplit.volMmk, posMmkIn, posMmkOut,
-      gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
-    gpuRangeStop();
-#else
     for (int iposMbar=0;iposMbar < num_ipos;iposMbar++) {
       int posMbar = (numPosMbarSample == 0) ? iposMbar : distribution(generator);
 
@@ -1277,7 +1260,7 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
       gpuRangeStart("computePos");
 #endif
       computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
-      // computePos(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
+      // computePosRef(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
       int posMbarIn = posMbarInV[0];
       int posMbarOut = posMbarOutV[0];
 
@@ -1294,7 +1277,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
       gpuRangeStop();
 #endif
     }
-#endif
 
 #ifdef ENABLE_NVTOOLS
     gpuRangeStop();
@@ -1309,10 +1291,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
       tensorSplit.volMmk, hostMsh.data(), tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
-    // printf("{%d, %d, %d},", launchConfig.numthread.x, tensorSplit.volMmk, tensorSplit.sizeMmk);
-    // for (int i=0;i < tensorSplit.sizeMmk;i++) {
-    //   printf("{%d, %d, %d},", hostMsh[i].c, hostMsh[i].d, hostMsh[i].ct);
-    // }
 #ifdef ENABLE_NVTOOLS
     gpuRangeStop();
 #endif

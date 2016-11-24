@@ -47,7 +47,20 @@ struct TensorConvInOut {
   int c_out;
   int d_out;
   int ct_out;
+  
+  static TensorConvInOut make_TensorConvInOut(const int c_in, const int d_in, const int ct_in,
+    const int c_out, const int d_out, const int ct_out) {
+    TensorConvInOut res;
+    res.c_in   = c_in;
+    res.d_in   = d_in;
+    res.ct_in  = ct_in;
+    res.c_out  = c_out;
+    res.d_out  = d_out;
+    res.ct_out = ct_out;
+    return res;
+  }
 };
+
 
 struct TensorConvInOutFast {
   int_fastdiv c_in;
@@ -56,6 +69,18 @@ struct TensorConvInOutFast {
   int_fastdiv c_out;
   int_fastdiv d_out;
   int ct_out;
+
+  static TensorConvInOutFast make_TensorConvInOutFast(const TensorConvInOut& conv) {
+    TensorConvInOutFast res;
+    res.c_in   = conv.c_in;
+    res.d_in   = conv.d_in;
+    res.ct_in  = conv.ct_in;
+    res.c_out  = conv.c_out;
+    res.d_out  = conv.d_out;
+    res.ct_out = conv.ct_out;
+    return res;
+  }
 };
+
 
 #endif // CUTTTYPES_H

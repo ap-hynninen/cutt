@@ -55,13 +55,15 @@ inline int glTransactions(const int* seg, const int n) {
   return count;
 }
 
-inline int glTransactionsVec(const int* seg, const int n) {
-  int count = (n > 0);
-  for (int i=1;i < n;i++) {
-    count += (seg[i-1] != seg[i]);
-  }
-  return count;
-}
+// inline int glTransactionsVec(const int* seg, const int n) {
+//   int_vector count(0);
+//   for (int i=1;i < n;i += INT_VECTOR_LEN) {
+//     int_vector seg_prev(seg[i-1]);
+//     int_vector seg_cur(seg[i]);
+//     count += (seg_prev != seg_cur);
+//   }
+//   return count.sum();
+// }
 
 //
 // Slower reference version of glTransactions
@@ -250,10 +252,22 @@ void computePos(const int vol0, const int vol1,
       posOutVal += j_rem_d_out * ct_out;
     }
 
-    int posInValVec[INT_VECTOR_LEN];
-    int posOutValVec[INT_VECTOR_LEN];
-    posInVal.copy(posInValVec);
-    posOutVal.copy(posOutValVec);
+    if (i + INT_VECTOR_LEN - 1 <= nvol) {
+      posInVal.copy(posIn + i);
+      posOutVal.copy(posOut + i);
+    } else {
+      int posInValVec[INT_VECTOR_LEN];
+      int posOutValVec[INT_VECTOR_LEN];
+      posInVal.copy(posInValVec);
+      posOutVal.copy(posOutValVec);
+    
+      for (int k=0;k < INT_VECTOR_LEN;k++) {
+        if (i + k <= nvol) {
+          posIn[i + k]  = posInValVec[k];
+          posOut[i + k] = posOutValVec[k];
+        }
+      }
+    }
 
 #if 0
     {
@@ -272,13 +286,7 @@ void computePos(const int vol0, const int vol1,
       }
     }
 #endif
-    
-    for (int k=0;k < INT_VECTOR_LEN;k++) {
-      if (i + k <= nvol) {
-        posIn[i + k] = posInValVec[k];
-        posIn[i + k] = posInValVec[k];
-      }
-    }
+
   }
 #else
   int nvol = vol1 - vol0;
@@ -346,10 +354,22 @@ void computePos(const int* vol, const int numVol,
       posOutVal += j_rem_d_out * ct_out;
     }
 
-    int posInValVec[INT_VECTOR_LEN];
-    int posOutValVec[INT_VECTOR_LEN];
-    posInVal.copy(posInValVec);
-    posOutVal.copy(posOutValVec);
+    if (i + INT_VECTOR_LEN - 1 < numVol) {
+      posInVal.copy(posIn + i);
+      posOutVal.copy(posOut + i);
+    } else {
+      int posInValVec[INT_VECTOR_LEN];
+      int posOutValVec[INT_VECTOR_LEN];
+      posInVal.copy(posInValVec);
+      posOutVal.copy(posOutValVec);
+     
+      for (int k=0;k < INT_VECTOR_LEN;k++) {
+        if (i + k < numVol) {
+          posIn[i + k] = posInValVec[k];
+          posIn[i + k] = posInValVec[k];
+        }
+      }
+    }
 
 #if 0
     {
@@ -368,13 +388,7 @@ void computePos(const int* vol, const int numVol,
       }
     }
 #endif
-    
-    for (int k=0;k < INT_VECTOR_LEN;k++) {
-      if (i + k < numVol) {
-        posIn[i + k] = posInValVec[k];
-        posIn[i + k] = posInValVec[k];
-      }
-    }
+
   }
 }
 
@@ -1286,6 +1300,40 @@ const int shTestData[138][3] =
         return false;
       }
 
+    }
+  }
+
+  //
+  // Test computePos
+  //
+  {
+    int sizeConv = 2;
+    std::vector<TensorConvInOut> conv(sizeConv);
+    conv[0] = TensorConvInOut::make_TensorConvInOut(1, 7, 1, 1, 703, 1);
+    conv[1] = TensorConvInOut::make_TensorConvInOut(7, 703, 1170, 703, 7, 164502);
+
+    std::vector<TensorConvInOutFast> convFast(conv.size());
+    for (int i=0;i < conv.size();i++) {
+      convFast[i] = TensorConvInOutFast::make_TensorConvInOutFast(conv[i]);
+    }
+
+    int vol = 1;
+    std::vector<int> posIn(vol);
+    std::vector<int> posOut(vol);
+    std::vector<int> posInRef(vol);
+    std::vector<int> posOutRef(vol);
+    computePos(vol, vol, convFast.data(), sizeConv, posIn.data(), posOut.data());
+    computePosRef(vol, vol, conv.begin(), conv.begin() + sizeConv, posInRef, posOutRef);
+    for (int i=0;i < vol;i++) {
+      if (posIn[i] != posInRef[i] || posOut[i] != posOutRef[i]) {
+        printf("%d %d | %d %d | i %d vol %d sizeConv %d\n", posIn[i], posInRef[i], posOut[i], posOutRef[i],
+          i, vol, sizeConv);
+        for (int j=0;j < sizeConv;j++) {
+          printf("%d %d %d %d %d %d\n", conv[j].c_in, conv[j].d_in, conv[j].ct_in,
+            conv[j].c_out, conv[j].d_out, conv[j].ct_out);
+        }
+        return false;
+      }
     }
   }
 

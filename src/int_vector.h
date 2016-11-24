@@ -4,6 +4,7 @@
 // Intel: Minimum SSE2 required. SSE can't be used because it does not support integer operations
 
 #if defined(__SSE2__)
+// Intel x86
 #include <x86intrin.h>
 
 #if defined(__AVX__)
@@ -20,7 +21,14 @@ const int INT_VECTOR_LEN = 4;
 const char INT_VECTOR_TYPE[] = "SSE2";
 #endif
 
+#elif defined(__ALTIVEC__)
+// IBM altivec
+#include <altivec.h>
+const int INT_VECTOR_LEN = 4;
+const char INT_VECTOR_TYPE[] = "ALTIVEC";
+
 #else
+// Nothing
 const int INT_VECTOR_LEN = 1;
 const char INT_VECTOR_TYPE[] = "SCALAR";
 #endif
@@ -40,6 +48,8 @@ private:
   __m256i x;
 #elif defined(__SSE2__)
   __m128i x;
+#elif defined(__ALTIVEC__)
+  vector signed int;
 #else
   int x;
 #endif
@@ -51,6 +61,8 @@ public:
     x = _mm256_set1_epi32(a);
 #elif defined(__SSE2__)
     x = _mm_set1_epi32(a);
+#elif defined(__ALTIVEC__)
+    x = a;
 #else
     x = a;
 #endif    
@@ -61,6 +73,7 @@ public:
     x = _mm256_set_epi32(a[7], a[6], a[5], a[4], a[3], a[2], a[1], a[0]);
 #elif defined(__SSE2__)
     x = _mm_set_epi32(a[3], a[2], a[1], a[0]);
+#elif defined(__ALTIVEC__)
 #else
     x = a[0];
 #endif    
@@ -84,6 +97,7 @@ public:
     x = _mm256_mullo_epi32(x, a.x);
 #elif defined(__SSE2__)
     x = _mm_mullo_epi32(x, a.x);
+#elif defined(__ALTIVEC__)
 #else
     x = x*a.x;
 #endif
@@ -95,6 +109,7 @@ public:
     x = _mm256_add_epi32(x, a.x);
 #elif defined(__SSE2__)
     x = _mm_add_epi32(x, a.x);
+#elif defined(__ALTIVEC__)
 #else
     x = x + a.x;
 #endif
@@ -106,6 +121,7 @@ public:
     x = _mm256_sub_epi32(x, a.x);
 #elif defined(__SSE2__)
     x = _mm_sub_epi32(x, a.x);
+#elif defined(__ALTIVEC__)
 #else
     x = x - a.x;
 #endif
@@ -117,6 +133,7 @@ public:
     x = _mm256_and_si256(x, a.x);
 #elif defined(__SSE2__)
     x = _mm_and_si128(x, a.x);
+#elif defined(__ALTIVEC__)
 #else
     x = x & a.x;
 #endif
@@ -130,6 +147,7 @@ public:
 #elif defined(__SSE2__)
     int_vector fullmask = int_vector(-1);
     x = _mm_andnot_si128(x, fullmask.x);
+#elif defined(__ALTIVEC__)
 #else
     x = ~x;
 #endif
@@ -142,6 +160,7 @@ public:
     x = _mm256_srai_epi32(x, n);
 #elif defined(__SSE2__)
     x = _mm_srai_epi32(x, n);
+#elif defined(__ALTIVEC__)
 #else
     x >>= n;
 #endif
@@ -156,6 +175,7 @@ public:
 #error "AVX not implemented: int_vector operator>>=(const int_vector n)"
 #elif defined(__SSE2__)
 #error "SSE2 not implemented: int_vector operator>>=(const int_vector n)"
+#elif defined(__ALTIVEC__)
 #else
     x >>= n;
 #endif
@@ -171,6 +191,8 @@ public:
     int res[INT_VECTOR_LEN];
     _mm_storeu_si128((__m128i *)&res, x);
     return res[i % INT_VECTOR_LEN];
+#elif defined(__ALTIVEC__)
+    return 1;
 #else
     return x;
 #endif
@@ -186,6 +208,7 @@ public:
     _mm256_storeu_si256((__m256i *)a, x);
 #elif defined(__SSE2__)
     _mm_storeu_si128((__m128i *)a, x);
+#elif defined(__ALTIVEC__)
 #else
     a[0] = x;
 #endif
@@ -214,19 +237,21 @@ public:
     return a;
   }
 
-  inline friend int sum(const int_vector a) {
+  inline int sum() {
 #if defined(__AVX__)
     int tmp[INT_VECTOR_LEN];
-    a.copy(tmp);
+    this->copy(tmp);
     int res = 0;
     for (int i=0;i < INT_VECTOR_LEN;i++) res += tmp[i];
     return res;
 #elif defined(__SSE2__)
     int tmp[INT_VECTOR_LEN];
-    a.copy(tmp);
+    this->copy(tmp);
     int res = 0;
     for (int i=0;i < INT_VECTOR_LEN;i++) res += tmp[i];
     return res;
+#elif defined(__ALTIVEC__)
+    return 1;
 #else
     return a;
 #endif
@@ -237,6 +262,8 @@ public:
     return int_vector(_mm256_cmpgt_epi32(a.x, b.x));
 #elif defined(__SSE2__)
     return int_vector(_mm_cmpgt_epi32(a.x, b.x));
+#elif defined(__ALTIVEC__)
+    return a;
 #else
     return int_vector(a.x > b.x);
 #endif
@@ -249,6 +276,8 @@ public:
   inline friend int_vector ge_mask(const int_vector a, const int_vector b) {
 #if defined(__SSE2__)
     return( ~lt_mask(a, b) );
+#elif defined(__ALTIVEC__)
+    return a;
 #else
     return (a.x >= b.x);
 #endif
@@ -258,14 +287,40 @@ public:
     return ge_mask(b, a);
   }
 
-  inline friend int_vector operator==(const int_vector a, const int_vector b) {
+  inline friend int_vector eq_mask(const int_vector a, const int_vector b) {
 #if defined(__AVX__)
-    return int_vector(_mm256_srli_epi32(_mm256_cmpeq_epi32(a.x, b.x), 31));
+    return int_vector(_mm256_cmpeq_epi32(a.x, b.x));
 #elif defined(__SSE2__)
-    return int_vector(_mm_srli_epi32(_mm_cmpeq_epi32(a.x, b.x), 31));
+    return int_vector(_mm_cmpeq_epi32(a.x, b.x));
+#elif defined(__ALTIVEC__)
+    return a;
 #else
     return int_vector(a.x == b.x);
 #endif
+  }
+
+  inline friend int_vector neq_mask(const int_vector a, const int_vector b) {
+    return ~eq_mask(a, b);
+  }
+
+  inline friend int_vector mask_to_bool(const int_vector a) {
+#if defined(__AVX__)
+    return int_vector(_mm256_srli_epi32(a.x, 31));
+#elif defined(__SSE2__)
+    return int_vector(_mm_srli_epi32(a.x, 31));
+#elif defined(__ALTIVEC__)
+    return a;
+#else
+    return a;
+#endif
+  }
+
+  inline friend int_vector operator==(const int_vector a, const int_vector b) {
+    return mask_to_bool(eq_mask(a, b));
+  }
+
+  inline friend int_vector operator!=(const int_vector a, const int_vector b) {
+    return mask_to_bool(neq_mask(a, b));
   }
 
   // Zero extended shift right
@@ -274,6 +329,8 @@ public:
     return int_vector ( _mm256_srli_epi32(a.x, n) );
 #elif defined(__SSE2__)
     return int_vector ( _mm_srli_epi32(a.x, n) );
+#elif defined(__ALTIVEC__)
+    return a;
 #else
     return int_vector( ((unsigned int)a.x >> n) );
 #endif
@@ -306,6 +363,8 @@ public:
     __m128i c2 = _mm_srli_epi64(_mm_mul_epi32(a2, b2), 32);
 
     __m128i c = _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(c1), _mm_castsi128_ps(c2), 0b10001000));
+#elif defined(__ALTIVEC__)
+    return a;
 #else
     int c = (((unsigned long long)((long long)a * (long long)b)) >> 32);
 #endif
