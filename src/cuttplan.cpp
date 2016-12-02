@@ -135,6 +135,7 @@ private:
   // map[i] tells where to find rank i in c[]
   int* map;
 public:
+  // rankInd[0 ... n - 1] = ranks that are included
   TensorC(const int rank, const int n, const int* rankInd, const int* dim) : rank(rank) {
     if (rank < 1 || n < 1 || n > rank) {
       printf("TensorC::TensorC, Invalid rank or n\n");
@@ -471,18 +472,18 @@ bool planExists(TensorSplit& ts, std::list<cuttPlan_t>& plans) {
   return false;
 }
 
-bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+bool cuttPlan_t::createTrivialPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   if (rank == 1) {
     TensorSplit ts;
     ts.method = Trivial;
     ts.update(1, 1, rank, dim, permutation);    
     LaunchConfig lc;
-    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, deviceID, prop, lc);
     if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
-      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc, numActiveBlock)) return false;
       plans.push_back(plan);
     }
   }
@@ -490,18 +491,18 @@ bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
   return true;
 }
 
-bool createTiledPlans(const int rank, const int* dim, const int* permutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+bool cuttPlan_t::createTiledPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   if (permutation[0] != 0 && rank > 1) {
     TensorSplit ts;
     ts.method = Tiled;
     ts.update(1, 1, rank, dim, permutation);    
     LaunchConfig lc;
-    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, deviceID, prop, lc);
     if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
-      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc, numActiveBlock)) return false;
       plans.push_back(plan);
     }
   }
@@ -509,8 +510,8 @@ bool createTiledPlans(const int rank, const int* dim, const int* permutation,
   return true;
 }
 
-bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+bool cuttPlan_t::createTiledCopyPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   // Count number of Mm and Mk which are the same
   int numMmMkSame = 0;
@@ -527,10 +528,10 @@ bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation
       ts.update(numMmMkSame - 1, numMmMkSame, rank, dim, permutation);      
     }
     LaunchConfig lc;
-    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+    int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, deviceID, prop, lc);
     if (numActiveBlock > 0 && !planExists(ts, plans)) {
       cuttPlan_t plan;
-      if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+      if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc, numActiveBlock)) return false;
       plans.push_back(plan);
     }
   }
@@ -538,8 +539,8 @@ bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation
   return true;
 }
 
-bool createPackedPlans(const int rank, const int* dim, const int* permutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+bool cuttPlan_t::createPackedPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
@@ -547,12 +548,12 @@ bool createPackedPlans(const int rank, const int* dim, const int* permutation,
       TensorSplit ts;
       ts.method = Packed;
       ts.update(numMm, numMk, rank, dim, permutation);
-      int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+      int numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, deviceID, prop, lc);
       // Does not fit on the device, break out of inner loop
       if (numActiveBlock == 0) break;
       if (!planExists(ts, plans)) {
         cuttPlan_t plan;
-        if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+        if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc, numActiveBlock)) return false;
         plans.push_back(plan);
       }
     }
@@ -561,8 +562,8 @@ bool createPackedPlans(const int rank, const int* dim, const int* permutation,
   return true;
 }
 
-bool createPackedSplitPlans(const int rank, const int* dim, const int* permutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+bool cuttPlan_t::createPackedSplitPlans(const int rank, const int* dim, const int* permutation,
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   LaunchConfig lc;
   for (int numMm=1;numMm < rank;numMm++) {
@@ -606,8 +607,12 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
         int bestNumSplit1 = 0;
         int bestNumSplit2 = 0;
         int numActiveBlock = 0;
+        // Store number of active blocks and launch configs here so they
+        // can be reused in plan.setup()
+        int numActiveBlock0, numActiveBlock1, numActiveBlock2;
+        LaunchConfig lc0, lc1, lc2;
         for (ts.numSplit=minNumSplit;ts.numSplit <= maxNumSplit;ts.numSplit++) {
-          numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, prop, lc);
+          numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, ts, deviceID, prop, lc);
           if (numActiveBlock != 0) {
             int volMmkUsed = ts.volMmkUsed();
             int val1 = volMmkUsed*numActiveBlock;
@@ -615,12 +620,20 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
             if (bestVal1 < val1) {
               bestVal1 = val1;
               bestNumSplit1 = ts.numSplit;
+              numActiveBlock1 = numActiveBlock;
+              lc1 = lc;
             }
             if (bestVal2 < val2) {
               bestVal2 = val2;
               bestNumSplit2 = ts.numSplit;
+              numActiveBlock2 = numActiveBlock;
+              lc2 = lc;
             }
-            if (bestNumSplit0 == 0) bestNumSplit0 = ts.numSplit;
+            if (bestNumSplit0 == 0) {
+              bestNumSplit0 = ts.numSplit;
+              numActiveBlock0 = numActiveBlock;
+              lc0 = lc;
+            }
           }
         }
         // Does not fit on the device, break out of inner loop
@@ -632,7 +645,7 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
         unsigned long long int dim0 = (unsigned long long int)ts.splitDim*(unsigned long long int)(ts.numSplit + 1);
         if (!planExists(ts, plans) && dim0 < dim_cutoff) {
           cuttPlan_t plan;
-          if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+          if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc0, numActiveBlock0)) return false;
           plans.push_back(plan);
         }
         if (bestNumSplit1 != bestNumSplit0) {
@@ -641,7 +654,7 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
           unsigned long long int dim1 = (unsigned long long int)ts.splitDim*(unsigned long long int)(ts.numSplit + 1);
           if (!planExists(ts, plans) && dim1 < dim_cutoff) {
             cuttPlan_t plan;
-            if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+            if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc1, numActiveBlock1)) return false;
             plans.push_back(plan);
           }
         }
@@ -651,7 +664,7 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
           unsigned long long int dim2 = (unsigned long long int)ts.splitDim*(unsigned long long int)(ts.numSplit + 1);
           if (!planExists(ts, plans) && dim2 < dim_cutoff) {
             cuttPlan_t plan;
-            if (!plan.setup(rank, dim, permutation, sizeofType, prop, ts)) return false;
+            if (!plan.setup(rank, dim, permutation, sizeofType, ts, lc2, numActiveBlock2)) return false;
             plans.push_back(plan);
           }
         }
@@ -665,21 +678,21 @@ bool createPackedSplitPlans(const int rank, const int* dim, const int* permutati
 //
 // Create all possible plans
 //
-bool createPlans(const int rank, const int* dim, const int* permutation,
+bool cuttPlan_t::createPlans(const int rank, const int* dim, const int* permutation,
   const int rankRed, const int* dimRed, const int* permutationRed,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
+  const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans) {
 
   size_t size0 = plans.size();
-  // if (!createTiledCopyPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createTrivialPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
+  /* if (!createTiledCopyPlans(rank, dim, permutation, sizeofType, deviceID, prop, plans)) return false;*/
+  if (!createTrivialPlans(rankRed, dimRed, permutationRed, sizeofType, deviceID, prop, plans)) return false;
   // If Trivial plan was created, that's the only one we need
   if (size0 != plans.size()) return true;
-  if (!createTiledCopyPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
-  if (!createTiledPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
-  if (!createPackedPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
-  if (!createPackedSplitPlans(rank, dim, permutation, sizeofType, prop, plans)) return false;
+  if (!createTiledCopyPlans(rankRed, dimRed, permutationRed, sizeofType, deviceID, prop, plans)) return false;
+  if (!createTiledPlans(rankRed, dimRed, permutationRed, sizeofType, deviceID, prop, plans)) return false;
+  if (!createPackedPlans(rank, dim, permutation, sizeofType, deviceID, prop, plans)) return false;
+  if (!createPackedSplitPlans(rank, dim, permutation, sizeofType, deviceID, prop, plans)) return false;
   if (rank != rankRed) {
-    if (!createPackedSplitPlans(rankRed, dimRed, permutationRed, sizeofType, prop, plans)) return false;
+    if (!createPackedSplitPlans(rankRed, dimRed, permutationRed, sizeofType, deviceID, prop, plans)) return false;
   }
   return true;
 }
@@ -798,13 +811,19 @@ void cuttPlan_t::print() {
 
 //
 // Setup plan
+// NOTE: Expects that cuttKernelLaunchConfiguration() has been called to setup
+// launchConfig_in and numActiveBlock_in
 //
 bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation,
-  const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in) {
+  const size_t sizeofType_in, const TensorSplit& tensorSplit_in,
+  const LaunchConfig& launchConfig_in, const int numActiveBlock_in) {
   
   rank = rank_in;
   sizeofType = sizeofType_in;
   tensorSplit = tensorSplit_in;
+  numActiveBlock = numActiveBlock_in;
+  launchConfig = launchConfig_in;
+  if (numActiveBlock == 0) return false;
 
   std::vector<bool> isMm(rank, false);
   std::vector<bool> isMk(rank, false);
@@ -816,8 +835,7 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
   }
 
   // Setup launch configuration
-  numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, tensorSplit, prop, launchConfig);
-  if (numActiveBlock == 0) return false;
+  // numActiveBlock = cuttKernelLaunchConfiguration(sizeofType, tensorSplit, prop, launchConfig);
 
   // Build cI
   int* I = new int[rank];
@@ -1027,16 +1045,12 @@ bool cuttPlan_t::setup(const int rank_in, const int* dim, const int* permutation
   return true;
 }
 
+// #define COUNTCYCLE_CHECK
+
 //
 // Count the number of cycles using the MWP-CWP model
 //
 bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
-
-  // Pre-compute magic numbers for fast integer division
-  std::vector<TensorConvInOutFast> hostMmkFast(hostMmk.size());
-  for (int i=0;i < hostMmk.size();i++) {
-    hostMmkFast[i] = TensorConvInOutFast::make_TensorConvInOutFast(hostMmk[i]);
-  }
 
   // Number of elements that are loaded per memory transaction:
   // 128 bytes per transaction
@@ -1109,24 +1123,25 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
 #ifdef ENABLE_NVTOOLS
     gpuRangeStart("computePos");
 #endif
-    computePos(0, volMmk0 - 1, hostMmkFast.data(), tensorSplit.sizeMmk, posMmkIn0.data(), posMmkOut0.data());
-    // {
-    //   std::vector<int> posMmkIn0Ref(volMmk0);
-    //   std::vector<int> posMmkOut0Ref(volMmk0);
-    //   computePosRef(0, volMmk0 - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
-    //     posMmkIn0Ref, posMmkOut0Ref);
-    //   for (int i=0;i < volMmk0;i++) {
-    //     if (posMmkIn0[i] != posMmkIn0Ref[i] || posMmkOut0[i] != posMmkOut0Ref[i]) {
-    //       printf("%d %d | %d %d | i %d volMmk0 %d sizeMmk %d\n", posMmkIn0[i], posMmkIn0Ref[i], posMmkOut0[i], posMmkOut0Ref[i],
-    //         i, volMmk0, tensorSplit.sizeMmk);
-    //       for (int j=0;j < tensorSplit.sizeMmk;j++) {
-    //         printf("%d %d %d %d %d %d\n", hostMmk[j].c_in, hostMmk[j].d_in, hostMmk[j].ct_in,
-    //           hostMmk[j].c_out, hostMmk[j].d_out, hostMmk[j].ct_out);
-    //       }
-    //       return false;
-    //     }
-    //   }
-    // }
+    computePos0(volMmk0, hostMmk.data(), tensorSplit.sizeMmk, posMmkIn0.data(), posMmkOut0.data());
+    // computePos(0, volMmk0 - 1, hostMmkFast.data(), tensorSplit.sizeMmk, posMmkIn0.data(), posMmkOut0.data());
+#ifdef COUNTCYCLE_CHECK
+    std::vector<int> posMmkIn0Ref(volMmk0);
+    std::vector<int> posMmkOut0Ref(volMmk0);
+    computePosRef(0, volMmk0 - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
+      posMmkIn0Ref, posMmkOut0Ref);
+    for (int i=0;i < volMmk0;i++) {
+      if (posMmkIn0[i] != posMmkIn0Ref[i] || posMmkOut0[i] != posMmkOut0Ref[i]) {
+        printf("%d %d | %d %d | i %d volMmk0 %d sizeMmk %d\n", posMmkIn0[i], posMmkIn0Ref[i], posMmkOut0[i], posMmkOut0Ref[i],
+          i, volMmk0, tensorSplit.sizeMmk);
+        for (int j=0;j < tensorSplit.sizeMmk;j++) {
+          printf("%d %d %d %d %d %d\n", hostMmk[j].c_in, hostMmk[j].d_in, hostMmk[j].ct_in,
+            hostMmk[j].c_out, hostMmk[j].d_out, hostMmk[j].ct_out);
+        }
+        return false;
+      }
+    }
+#endif
 #ifdef ENABLE_NVTOOLS
     gpuRangeStop();
 #endif
@@ -1136,10 +1151,26 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
 #ifdef ENABLE_NVTOOLS
       gpuRangeStart("computePos");
 #endif
-      computePos(0, volMmk1 - 1, hostMmkFast.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
-        posMmkIn1.data(), posMmkOut1.data());
-      // computePosRef(0, volMmk1 - 1, hostMmk.begin() + tensorSplit.sizeMmk, hostMmk.begin() + tensorSplit.sizeMmk*2,
-      //   posMmkIn1, posMmkOut1);
+      computePos0(volMmk1, hostMmk.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk, posMmkIn1.data(), posMmkOut1.data());
+      // computePos(0, volMmk1 - 1, hostMmkFast.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
+      //   posMmkIn1.data(), posMmkOut1.data());
+#ifdef COUNTCYCLE_CHECK
+      std::vector<int> posMmkIn1Ref(volMmk1);
+      std::vector<int> posMmkOut1Ref(volMmk1);
+      computePosRef(0, volMmk1 - 1, hostMmk.begin() + tensorSplit.sizeMmk, hostMmk.begin() + tensorSplit.sizeMmk*2,
+        posMmkIn1Ref, posMmkOut1Ref);
+      for (int i=0;i < volMmk1;i++) {
+        if (posMmkIn1[i] != posMmkIn1Ref[i] || posMmkOut1[i] != posMmkOut1Ref[i]) {
+          printf("%d %d | %d %d | i %d volMmk1 %d sizeMmk %d\n", posMmkIn1[i], posMmkIn1Ref[i], posMmkOut1[i], posMmkOut1Ref[i],
+            i, volMmk1, tensorSplit.sizeMmk);
+          for (int j=0;j < tensorSplit.sizeMmk;j++) {
+            printf("%d %d %d %d %d %d\n", hostMmk[j].c_in, hostMmk[j].d_in, hostMmk[j].ct_in,
+              hostMmk[j].c_out, hostMmk[j].d_out, hostMmk[j].ct_out);
+          }
+          return false;
+        }
+      }
+#endif
 #ifdef ENABLE_NVTOOLS
       gpuRangeStop();
 #endif
@@ -1152,32 +1183,157 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     gpuRangeStart("PackedSplit: loop");
 #endif
 
+    std::vector<int> posTmp(num_ipos);
+    int numRoundUp = 0;
     for (int ipos=0;ipos < num_ipos;ipos++) {
-      int pos = (numPosMbarSample == 0) ? ipos : distribution(generator);
-      int posMbar = pos / tensorSplit.numSplit;
-      int isplit = pos % tensorSplit.numSplit;
-      // Start position in this split
-      int p0 = isplit*tensorSplit.splitDim/tensorSplit.numSplit;
-      // int p0 = (tensorSplit.splitDim/tensorSplit.numSplit)*isplit + std::min(isplit, (tensorSplit.splitDim % tensorSplit.numSplit));
-
-      std::vector<int> posMbarInV(1);
-      std::vector<int> posMbarOutV(1);
-      computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
-      // computePosRef(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
-      int posMbarIn = posMbarInV[0] + p0*cuDimMm;
-      int posMbarOut = posMbarOutV[0] + p0*cuDimMk;
-
+      posTmp[ipos] = (numPosMbarSample == 0) ? ipos : distribution(generator);
+      int isplit = posTmp[ipos] % tensorSplit.numSplit;
+      if (isplit < num1) numRoundUp++;
+    }
+    std::vector<int> pos(num_ipos);
+    int indRoundUp = 0;
+    int indRoundDown = numRoundUp;
+    for (int ipos=0;ipos < num_ipos;ipos++) {
+      int isplit = posTmp[ipos] % tensorSplit.numSplit;
       if (isplit < num1) {
-        // Round up split
-        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
-          posMbarIn, posMbarOut, volMmk1, posMmkIn1, posMmkOut1,
-          gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
+        pos[indRoundUp++] = posTmp[ipos];
       } else {
-        // Round down split
-        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
-          posMbarIn, posMbarOut, volMmk0, posMmkIn0, posMmkOut0,
-          gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
+        pos[indRoundDown++] = posTmp[ipos];        
       }
+    }
+    if (indRoundUp != numRoundUp || indRoundDown != num_ipos) {
+      printf("cuttPlan_t::countCycles, fatal implemention bug\n");
+      return false;
+    }
+    // Round up is in pos[0 ... numRoundUp - 1]
+    // Round down is in pos[numRoundUp ... num_ipos - 1]
+
+    // Round up splits
+    for (int ipos=0;ipos < numRoundUp;ipos += INT_VECTOR_LEN) {
+      int numPos = std::min(numRoundUp - ipos, INT_VECTOR_LEN);
+      int posMbarIn[INT_VECTOR_LEN];
+      int posMbarOut[INT_VECTOR_LEN];
+      for (int i=0;i < numPos;i++) {
+        int posMbar = pos[ipos + i] / tensorSplit.numSplit;
+        int isplit  = pos[ipos + i] % tensorSplit.numSplit;
+        int p0 = isplit*tensorSplit.splitDim/tensorSplit.numSplit;
+        computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, &posMbarIn[i], &posMbarOut[i]);
+        posMbarIn[i] += p0*cuDimMm;
+        posMbarOut[i] += p0*cuDimMk;
+      }
+      for (int i=numPos;i < INT_VECTOR_LEN;i++) {
+        posMbarIn[i]  = posMbarIn[numPos - 1];
+        posMbarOut[i] = posMbarOut[numPos - 1];
+      }
+
+      int gld_tran_tmp = 0;
+      int gst_tran_tmp = 0;
+      int gld_req_tmp = 0;
+      int gst_req_tmp = 0;
+      int cl_full_l2_tmp = 0;
+      int cl_part_l2_tmp = 0;
+      countPackedGlTransactions0(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+        numPos, posMbarIn, posMbarOut, volMmk1, posMmkIn1.data(), posMmkOut1.data(),
+        gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp,
+        cl_full_l2_tmp, cl_part_l2_tmp, cl_full_l1, cl_part_l1);
+      gld_tran += gld_tran_tmp;
+      gst_tran += gst_tran_tmp;
+      gld_req += gld_req_tmp;
+      gst_req += gst_req_tmp;
+      cl_full_l2 += cl_full_l2_tmp;
+      cl_part_l2 += cl_part_l2_tmp;
+
+#ifdef COUNTCYCLE_CHECK
+      int gld_tran_ref = 0;
+      int gst_tran_ref = 0;
+      int gld_req_ref = 0;
+      int gst_req_ref = 0;
+      int cl_full_l2_ref = 0;
+      int cl_part_l2_ref = 0;
+      for (int i=0;i < numPos;i++) {
+        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+          posMbarIn[i], posMbarOut[i], volMmk1, posMmkIn1, posMmkOut1,
+          gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref,
+          cl_full_l2_ref, cl_part_l2_ref, cl_full_l1, cl_part_l1);
+      }
+      if (gld_tran_tmp != gld_tran_ref || gst_tran_tmp != gst_tran_ref ||
+        gld_req_tmp != gld_req_ref || gst_req_tmp != gst_req_ref) {
+        printf("PackedSplit:countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d %d %d\n", gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp);
+        printf("ref %d %d %d %d\n", gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref);
+        return false;
+      }
+      if (cl_full_l2_tmp != cl_full_l2_ref || cl_part_l2_tmp != cl_part_l2_ref) {
+        printf("PackedSplit:countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d\n", cl_full_l2_tmp, cl_part_l2_tmp);
+        printf("ref %d %d\n",  cl_full_l2_ref, cl_part_l2_ref);
+        return false;
+      }
+#endif
+    }
+
+    // Round down splits
+    for (int ipos=numRoundUp;ipos < num_ipos;ipos += INT_VECTOR_LEN) {
+      int numPos = std::min(num_ipos - ipos, INT_VECTOR_LEN);
+      int posMbarIn[INT_VECTOR_LEN];
+      int posMbarOut[INT_VECTOR_LEN];
+      for (int i=0;i < numPos;i++) {
+        int posMbar = pos[ipos + i] / tensorSplit.numSplit;
+        int isplit  = pos[ipos + i] % tensorSplit.numSplit;
+        int p0 = isplit*tensorSplit.splitDim/tensorSplit.numSplit;
+        computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, &posMbarIn[i], &posMbarOut[i]);
+        posMbarIn[i] += p0*cuDimMm;
+        posMbarOut[i] += p0*cuDimMk;
+      }
+      for (int i=numPos;i < INT_VECTOR_LEN;i++) {
+        posMbarIn[i]  = posMbarIn[numPos - 1];
+        posMbarOut[i] = posMbarOut[numPos - 1];
+      }
+
+      int gld_tran_tmp = 0;
+      int gst_tran_tmp = 0;
+      int gld_req_tmp = 0;
+      int gst_req_tmp = 0;
+      int cl_full_l2_tmp = 0;
+      int cl_part_l2_tmp = 0;
+      countPackedGlTransactions0(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+        numPos, posMbarIn, posMbarOut, volMmk0, posMmkIn0.data(), posMmkOut0.data(),
+        gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp,
+        cl_full_l2_tmp, cl_part_l2_tmp, cl_full_l1, cl_part_l1);
+      gld_tran += gld_tran_tmp;
+      gst_tran += gst_tran_tmp;
+      gld_req += gld_req_tmp;
+      gst_req += gst_req_tmp;
+      cl_full_l2 += cl_full_l2_tmp;
+      cl_part_l2 += cl_part_l2_tmp;
+
+#ifdef COUNTCYCLE_CHECK
+      int gld_tran_ref = 0;
+      int gst_tran_ref = 0;
+      int gld_req_ref = 0;
+      int gst_req_ref = 0;
+      int cl_full_l2_ref = 0;
+      int cl_part_l2_ref = 0;
+      for (int i=0;i < numPos;i++) {
+        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+          posMbarIn[i], posMbarOut[i], volMmk0, posMmkIn0, posMmkOut0,
+          gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref,
+          cl_full_l2_ref, cl_part_l2_ref, cl_full_l1, cl_part_l1);
+      }
+      if (gld_tran_tmp != gld_tran_ref || gst_tran_tmp != gst_tran_ref ||
+        gld_req_tmp != gld_req_ref || gst_req_tmp != gst_req_ref) {
+        printf("PackedSplit:countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d %d %d\n", gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp);
+        printf("ref %d %d %d %d\n", gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref);
+        return false;
+      }
+      if (cl_full_l2_tmp != cl_full_l2_ref || cl_part_l2_tmp != cl_part_l2_ref) {
+        printf("PackedSplit:countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d\n", cl_full_l2_tmp, cl_part_l2_tmp);
+        printf("ref %d %d\n",  cl_full_l2_ref, cl_part_l2_ref);
+        return false;
+      }
+#endif
     }
 
 #ifdef ENABLE_NVTOOLS
@@ -1191,22 +1347,59 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     sld_req = 0;
     sst_req = 0;
     // Round down splits
-    countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
+    countPackedShTransactions0(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
       volMmk0, hostMsh.data(), tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
+#ifdef COUNTCYCLE_CHECK
+    {
+      int sld_tran_ref = 0;
+      int sst_tran_ref = 0;
+      int sld_req_ref = 0;
+      int sst_req_ref = 0;
+      countPackedShTransactionsRef(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+        volMmk0, hostMsh.data(), tensorSplit.sizeMmk,
+        sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+      if (sld_tran != sld_tran_ref || sst_tran != sst_tran_ref ||
+        sld_req != sld_req_ref || sst_req != sst_req_ref) {
+        printf("PackedSplit:countPackedShTransactions0 fails\n");
+        printf("    %d %d %d %d\n", sld_tran, sst_tran, sld_req, sst_req);
+        printf("ref %d %d %d %d\n", sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+        return false;
+      }
+    }
+#endif
     sld_tran *= num0;
     sst_tran *= num0;
     sld_req *= num0;
     sst_req *= num0;
+
     // Round up splits
     if (num1 > 0) {
       int sld_tran_tmp = 0;
       int sst_tran_tmp = 0;
       int sld_req_tmp = 0;
       int sst_req_tmp = 0;
-      countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x,
+      countPackedShTransactions0(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
         volMmk1, hostMsh.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
         sld_tran_tmp, sst_tran_tmp, sld_req_tmp, sst_req_tmp);
+#ifdef COUNTCYCLE_CHECK
+      {
+        int sld_tran_ref = 0;
+        int sst_tran_ref = 0;
+        int sld_req_ref = 0;
+        int sst_req_ref = 0;
+        countPackedShTransactionsRef(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+          volMmk1, hostMsh.data() + tensorSplit.sizeMmk, tensorSplit.sizeMmk,
+          sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+        if (sld_tran_tmp != sld_tran_ref || sst_tran_tmp != sst_tran_ref ||
+          sld_req_tmp != sld_req_ref || sst_req_tmp != sst_req_ref) {
+          printf("PackedSplit:countPackedShTransactions0 fails\n");
+          printf("    %d %d %d %d\n", sld_tran, sst_tran, sld_req, sst_req);
+          printf("ref %d %d %d %d\n", sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+          return false;
+        }
+      }
+#endif
       sld_tran += sld_tran_tmp*num1;
       sst_tran += sst_tran_tmp*num1;
       sld_req += sld_req_tmp*num1;
@@ -1239,10 +1432,23 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     std::vector<int> posMmkIn(tensorSplit.volMmk);
     std::vector<int> posMmkOut(tensorSplit.volMmk);
 
-    computePos(0, tensorSplit.volMmk - 1, hostMmkFast.data(), tensorSplit.sizeMmk,
+    computePos0(tensorSplit.volMmk, hostMmk.data(), tensorSplit.sizeMmk,
       posMmkIn.data(), posMmkOut.data());
-    // computePosRef(0, tensorSplit.volMmk - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
-    //   posMmkIn, posMmkOut);
+    // computePos(0, tensorSplit.volMmk - 1, hostMmkFast.data(), tensorSplit.sizeMmk,
+    //   posMmkIn.data(), posMmkOut.data());
+#ifdef COUNTCYCLE_CHECK
+    std::vector<int> posMmkInRef(tensorSplit.volMmk);
+    std::vector<int> posMmkOutRef(tensorSplit.volMmk);
+    computePosRef(0, tensorSplit.volMmk - 1, hostMmk.begin(), hostMmk.begin() + tensorSplit.sizeMmk,
+      posMmkInRef, posMmkOutRef);
+    for (int i=0;i < tensorSplit.volMmk;i++) {
+      if (posMmkIn[i] != posMmkInRef[i] || posMmkOut[i] != posMmkOutRef[i]) {
+        printf("computePos0 fails\n");
+        printf("%d %d %d %d\n", posMmkIn[i], posMmkInRef[i], posMmkOut[i], posMmkOutRef[i]);
+        return false;
+      }
+    }
+#endif
 
     int num_ipos = (numPosMbarSample == 0) ? tensorSplit.volMbar : numPosMbarSample;
 
@@ -1251,27 +1457,78 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     gpuRangeStart("Packed: loop");
 #endif
 
-    for (int iposMbar=0;iposMbar < num_ipos;iposMbar++) {
-      int posMbar = (numPosMbarSample == 0) ? iposMbar : distribution(generator);
+    for (int iposMbar=0;iposMbar < num_ipos;iposMbar+=INT_VECTOR_LEN) {
+      // int posMbar = (numPosMbarSample == 0) ? iposMbar : distribution(generator);
+      int numPos = std::min(num_ipos - iposMbar, INT_VECTOR_LEN);
+      int posMbar[INT_VECTOR_LEN];
+      for (int i=0;i < numPos;i++) {
+        posMbar[i] = (numPosMbarSample == 0) ? (iposMbar + i) : distribution(generator);
+      }
+      for (int i=numPos;i < INT_VECTOR_LEN;i++) {
+        posMbar[i] = posMbar[numPos - 1];
+      }
 
-      std::vector<int> posMbarInV(1);
-      std::vector<int> posMbarOutV(1);
+      int posMbarIn[INT_VECTOR_LEN];
+      int posMbarOut[INT_VECTOR_LEN];
 #ifdef ENABLE_NVTOOLS
       gpuRangeStart("computePos");
 #endif
-      computePos(posMbar, posMbar, hostMbar.data(), tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
+      for (int i=0;i < INT_VECTOR_LEN;i++) {
+        computePos(posMbar[i], posMbar[i], hostMbar.data(), tensorSplit.sizeMbar, &posMbarIn[i], &posMbarOut[i]);
+      }
       // computePosRef(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + tensorSplit.sizeMbar, posMbarInV, posMbarOutV);
-      int posMbarIn = posMbarInV[0];
-      int posMbarOut = posMbarOutV[0];
+      // int posMbarIn = posMbarInV[0];
+      // int posMbarOut = posMbarOutV[0];
 
 #ifdef ENABLE_NVTOOLS
       gpuRangeStop();
       gpuRangeStart("countPackedGlTransactions");
 #endif
 
-      countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
-        posMbarIn, posMbarOut, tensorSplit.volMmk, posMmkIn, posMmkOut,
-        gld_tran, gst_tran, gld_req, gst_req, cl_full_l2, cl_part_l2, cl_full_l1, cl_part_l1);
+      int gld_tran_tmp = 0;
+      int gst_tran_tmp = 0;
+      int gld_req_tmp = 0;
+      int gst_req_tmp = 0;
+      int cl_full_l2_tmp = 0;
+      int cl_part_l2_tmp = 0;
+      countPackedGlTransactions0(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+        numPos, posMbarIn, posMbarOut, tensorSplit.volMmk, posMmkIn.data(), posMmkOut.data(),
+        gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp,
+        cl_full_l2_tmp, cl_part_l2_tmp, cl_full_l1, cl_part_l1);
+      gld_tran += gld_tran_tmp;
+      gst_tran += gst_tran_tmp;
+      gld_req += gld_req_tmp;
+      gst_req += gst_req_tmp;
+      cl_full_l2 += cl_full_l2_tmp;
+      cl_part_l2 += cl_part_l2_tmp;
+
+#ifdef COUNTCYCLE_CHECK
+      int gld_tran_ref = 0;
+      int gst_tran_ref = 0;
+      int gld_req_ref = 0;
+      int gst_req_ref = 0;
+      int cl_full_l2_ref = 0;
+      int cl_part_l2_ref = 0;
+      for (int i=0;i < numPos;i++) {
+        countPackedGlTransactions(prop.warpSize, accWidth, cacheWidth, launchConfig.numthread.x,
+          posMbarIn[i], posMbarOut[i], tensorSplit.volMmk, posMmkIn, posMmkOut,
+          gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref,
+          cl_full_l2_ref, cl_part_l2_ref, cl_full_l1, cl_part_l1);
+      }
+      if (gld_tran_tmp != gld_tran_ref || gst_tran_tmp != gst_tran_ref ||
+        gld_req_tmp != gld_req_ref || gst_req_tmp != gst_req_ref) {
+        printf("countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d %d %d\n", gld_tran_tmp, gst_tran_tmp, gld_req_tmp, gst_req_tmp);
+        printf("ref %d %d %d %d\n", gld_tran_ref, gst_tran_ref, gld_req_ref, gst_req_ref);
+        return false;
+      }
+      if (cl_full_l2_tmp != cl_full_l2_ref || cl_part_l2_tmp != cl_part_l2_ref) {
+        printf("countPackedGlTransactions0 ERROR\n");
+        printf("tmp %d %d\n", cl_full_l2_tmp, cl_part_l2_tmp);
+        printf("ref %d %d\n",  cl_full_l2_ref, cl_part_l2_ref);
+        return false;
+      }
+#endif
 
 #ifdef ENABLE_NVTOOLS
       gpuRangeStop();
@@ -1288,9 +1545,28 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     sst_tran = 0;
     sld_req = 0;
     sst_req = 0;
-    countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+    countPackedShTransactions0(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
       tensorSplit.volMmk, hostMsh.data(), tensorSplit.sizeMmk,
       sld_tran, sst_tran, sld_req, sst_req);
+#ifdef COUNTCYCLE_CHECK
+    int sld_tran_ref = 0;
+    int sst_tran_ref = 0;
+    int sld_req_ref = 0;
+    int sst_req_ref = 0;
+    countPackedShTransactionsRef(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+      tensorSplit.volMmk, hostMsh.data(), tensorSplit.sizeMmk,
+      sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+    if (sld_tran != sld_tran_ref || sst_tran != sst_tran_ref ||
+      sld_req != sld_req_ref || sst_req != sst_req_ref) {
+      printf("countPackedShTransactions0 fails\n");
+      printf("    %d %d %d %d\n", sld_tran, sst_tran, sld_req, sst_req);
+      printf("ref %d %d %d %d\n", sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
+      return false;
+    }
+#endif
+    // countPackedShTransactions(prop.warpSize, prop.warpSize, launchConfig.numthread.x, 
+    //   tensorSplit.volMmk, hostMsh.data(), tensorSplit.sizeMmk,
+    //   sld_tran, sst_tran, sld_req, sst_req);
 #ifdef ENABLE_NVTOOLS
     gpuRangeStop();
 #endif
@@ -1315,35 +1591,6 @@ bool cuttPlan_t::countCycles(cudaDeviceProp& prop, const int numPosMbarSample) {
     return false;
   }
 
-#if 0
-  {
-    int gld_req_t, gst_req_t, gld_tran_t, gst_tran_t;
-    int cl_full_l2_t, cl_part_l2_t, cl_full_l1_t, cl_part_l1_t;
-    activate();
-    if (!cuttGpuModelKernel(*this, accWidth, cacheWidth, gld_tran_t, gst_tran_t, gld_req_t, gst_req_t,
-      cl_full_l2_t, cl_part_l2_t, cl_full_l1_t, cl_part_l1_t)) return false;
-
-    // printf("%d gld %f %f gst %f %f cl %f %f\n", tensorSplit.method,
-    //   (float)gld_tran/(float)gld_req, (float)gld_tran2/(float)gld_req2,
-    //   (float)gst_tran/(float)gst_req, (float)gst_tran2/(float)gst_req2,
-    //   (float)cl_part/(float)(cl_part + cl_full), (float)cl_part2/(float)(cl_part2 + cl_full2));
-    // printf("req  %d %d tran  %d %d\n", gld_req, gst_req, gld_tran, gst_tran);
-    // printf("req %d %d tran %d %d\n", gld_req_t, gst_req_t, gld_tran_t, gst_tran_t);
-    // printf("cl  %d %d\n", cl_full, cl_part);
-    // printf("cl_l2 %d %d cl_l1 %d %d\n", cl_full_l2_t, cl_part_l2_t, cl_full_l1_t, cl_part_l1_t);
-
-    // printf("%d %d %d\n", cl_full_l1_t, cl_part_l1_t, l1_tran_t);
-
-    gld_req = gld_req_t;
-    gst_req = gst_req_t;
-    gld_tran = gld_tran_t;
-    gst_tran = gst_tran_t;
-    cl_full_l2 = cl_full_l2_t;
-    cl_part_l2 = cl_part_l2_t;
-    cl_full_l1 = cl_full_l1_t;
-    cl_part_l1 = cl_part_l1_t;
-  }
-#endif
 
   int numthread = launchConfig.numthread.x*launchConfig.numthread.y*launchConfig.numthread.z;
   // double cl_val = (double)cl_part/(double)std::max(1, cl_full + cl_part);

@@ -24,6 +24,7 @@ SOFTWARE.
 *******************************************************************************/
 #include <cuda.h>
 #include "CudaUtils.h"
+#include "LRUCache.h"
 #include "cuttkernel.h"
 
 #define RESTRICT __restrict__
@@ -545,150 +546,20 @@ void cuttKernelSetSharedMemConfig() {
 
 }
 
-#if 0
-int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc);
-
-// Maximum number of GPU devices per shared memory node
-const int MAX_NUMDEVICE = 256;
-
-static std::vector< std::vector< std::vector<int> > > packedDB4(MAX_NUMDEVICE);
-static std::vector< std::vector< std::vector<int> > > packedDB8(MAX_NUMDEVICE);
-static std::vector< std::vector< std::vector<int> > > packedSplitDB4(MAX_NUMDEVICE);
-static std::vector< std::vector< std::vector<int> > > packedSplitDB8(MAX_NUMDEVICE);
-
-//
-// Builds a database of number of active blocks per SM
-//
-bool cuttKernelDatabase(int deviceID, cudaDeviceProp& prop) {
-  if (deviceID < 0 || deviceID >= MAX_NUMDEVICE) return false;
-  if (packedDB4[deviceID].size() > 0) return true;
-  LaunchConfig lc;
-  lc.numthread.y = 1;
-  lc.numthread.z = 1;
-  lc.shmemsize = 0;
-  packedDB4[deviceID].resize(MAX_REG_STORAGE);
-  packedDB8[deviceID].resize(MAX_REG_STORAGE);
-  packedSplitDB4[deviceID].resize(MAX_REG_STORAGE);
-  packedSplitDB8[deviceID].resize(MAX_REG_STORAGE);
-  printf("name %s\n", prop.name);
-  // printf("sharedMemPerBlock %d sharedMemPerMultiprocessor %d\n", prop.sharedMemPerBlock, prop.sharedMemPerMultiprocessor);
-  const int max_nwarp = prop.maxThreadsPerBlock / prop.warpSize;
-  for (lc.numRegStorage=1;lc.numRegStorage <= MAX_REG_STORAGE;lc.numRegStorage++) {
-    int ireg = lc.numRegStorage - 1;
-    packedDB4[deviceID][ireg].resize(max_nwarp);
-    packedDB8[deviceID][ireg].resize(max_nwarp);
-    packedSplitDB4[deviceID][ireg].resize(max_nwarp);
-    packedSplitDB8[deviceID][ireg].resize(max_nwarp);
-    for (int nwarp=1;nwarp <= max_nwarp;nwarp++) {
-      lc.numthread.x = nwarp*prop.warpSize;
-      int iwarp = nwarp - 1;
-      packedDB4[deviceID][ireg][iwarp] = getNumActiveBlockOld(Packed, 4, lc);
-      packedDB8[deviceID][ireg][iwarp] = getNumActiveBlockOld(Packed, 8, lc);
-      packedSplitDB4[deviceID][ireg][iwarp] = getNumActiveBlockOld(PackedSplit, 4, lc);
-      packedSplitDB8[deviceID][ireg][iwarp] = getNumActiveBlockOld(PackedSplit, 8, lc);
-      // printf("%d ", packedDB4[lc.numRegStorage - 1][nwarp - 1]);
-    }
-    // printf("\n");
-  }
-
-  return true;
-}
+// Caches for PackedSplit kernels. One cache for all devices
+// NOTE: Not thread safe
+const int CACHE_SIZE = 100000;
+const int MAX_NUMWARP = (1024/32);
+const int MAX_NUMTYPE = 2;
+static int numDevices = -1;
+LRUCache<unsigned long long int, int> nabCache(CACHE_SIZE, -1);
 
 //
 // Returns the maximum number of active blocks per SM
 //
-int getNumActiveBlockDB(int method, int sizeofType, cudaDeviceProp& prop, LaunchConfig& lc) {
-  int numActiveBlock;
-  int numthread = lc.numthread.x * lc.numthread.y * lc.numthread.z;
-  switch(method) {
-    case Trivial:
-    {
-      // This value does not matter, but should be > 0
-      numActiveBlock = 1;
-    }
-    break;
+int getNumActiveBlock(const int method, const int sizeofType, const LaunchConfig& lc,
+  const int deviceID, const cudaDeviceProp& prop) {
 
-    case Packed:
-    {
-      int deviceID;
-      cudaCheck(cudaGetDevice(&deviceID));
-      // Get number of active blocks limited by register and thread block size
-      int ireg = lc.numRegStorage - 1;
-      int iwarp = numthread/prop.warpSize - 1;
-      int nblockDB = (sizeofType == 4) ? packedDB4[deviceID][ireg][iwarp] : packedDB8[deviceID][ireg][iwarp];
-      // Get number of active blocks limited by shared memory usage
-      int nblockSH = prop.sharedMemPerMultiprocessor / lc.shmemsize;
-      numActiveBlock = std::min(nblockDB, nblockSH);
-
-// #define CALL0(TYPE, NREG) \
-//   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-//     transposePacked<TYPE, NREG>, numthread, lc.shmemsize)
-//       switch(lc.numRegStorage) {
-// #define CALL(ICASE) case ICASE: if (sizeofType == 4) CALL0(float,  ICASE); if (sizeofType == 8) CALL0(double, ICASE); break
-// #include "calls.h"
-//       }
-// #undef CALL
-// #undef CALL0
-    }
-    break;
-
-    case PackedSplit:
-    {
-      int deviceID;
-      cudaCheck(cudaGetDevice(&deviceID));
-      // Get number of active blocks limited by register and thread block size
-      int ireg = lc.numRegStorage - 1;
-      int iwarp = numthread/prop.warpSize - 1;
-      int nblockDB = (sizeofType == 4) ? packedSplitDB4[deviceID][ireg][iwarp] : packedSplitDB8[deviceID][ireg][iwarp];
-      // Get number of active blocks limited by shared memory usage
-      int nblockSH = prop.sharedMemPerMultiprocessor / lc.shmemsize;
-      numActiveBlock = std::min(nblockDB, nblockSH);
-
-// #define CALL0(TYPE, NREG) \
-//   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-//     transposePackedSplit<TYPE, NREG>, numthread, lc.shmemsize)
-//       switch(lc.numRegStorage) {
-// #define CALL(ICASE) case ICASE: if (sizeofType == 4) CALL0(float,  ICASE); if (sizeofType == 8) CALL0(double, ICASE); break
-// #include "calls.h"
-//       }
-// #undef CALL
-// #undef CALL0
-    }
-    break;
-
-    case Tiled:
-    {
-      if (sizeofType == 4) {
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiled<float>, numthread, lc.shmemsize);
-      } else {
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiled<double>, numthread, lc.shmemsize);
-      }
-    }
-    break;
-
-    case TiledCopy:
-    {
-      if (sizeofType == 4) {
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledCopy<float>, numthread, lc.shmemsize);
-      } else {
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledCopy<double>, numthread, lc.shmemsize);
-      }
-    }
-    break;
-  }
-
-  return numActiveBlock;
-}
-#endif
-
-//
-// Returns the maximum number of active blocks per SM
-//
-int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
   int numActiveBlock;
   int numthread = lc.numthread.x * lc.numthread.y * lc.numthread.z;
   switch(method) {
@@ -715,6 +586,28 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
 
     case PackedSplit:
     {
+      // Allocate cache structure if needed
+      if (numDevices == -1) {
+        cudaCheck(cudaGetDeviceCount(&numDevices));
+      }
+      // Build unique key for cache
+      int key_warp = (numthread/prop.warpSize - 1);
+      if (key_warp >= MAX_NUMWARP) {
+        printf("getNumActiveBlock maximum number of warps exceeded\n");
+        exit(1);
+      }
+      int key_reg = (lc.numRegStorage - 1);
+      int key_type = (sizeofType == 4);
+      unsigned long long int key = 
+      (unsigned long long int)(lc.shmemsize/sizeofType)*MAX_NUMWARP*MAX_REG_STORAGE*MAX_NUMTYPE*numDevices + 
+      (unsigned long long int)deviceID*MAX_NUMWARP*MAX_REG_STORAGE*MAX_NUMTYPE +
+      (unsigned long long int)key_type*MAX_NUMWARP*MAX_REG_STORAGE + 
+      (unsigned long long int)key_reg*MAX_NUMWARP + 
+      (unsigned long long int)key_warp;
+
+      numActiveBlock = nabCache.get(key);
+      if (numActiveBlock == -1) {
+        // key not found in cache, determine value and add it to cache
 #define CALL0(TYPE, NREG) \
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
     transposePackedSplit<TYPE, NREG>, numthread, lc.shmemsize)
@@ -724,6 +617,8 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
       }
 #undef CALL
 #undef CALL0
+        nabCache.set(key, numActiveBlock);
+      }
     }
     break;
 
@@ -755,18 +650,6 @@ int getNumActiveBlock(int method, int sizeofType, LaunchConfig& lc) {
   return numActiveBlock;
 }
 
-#if 0
-int getNumActiveBlock(int method, int sizeofType, cudaDeviceProp& prop, LaunchConfig& lc) {  
-  // int nb1 = getNumActiveBlockOld(method, sizeofType, lc);
-  int nb2 = getNumActiveBlockDB(method, sizeofType, prop, lc);
-  // if (nb1 != nb2) {
-  //   printf("nb1 %d nb2 %d\n", nb1, nb2);
-  //   exit(1);
-  // }
-  return nb2;
-}
-#endif
-
 //
 // Sets up kernel launch configuration
 //
@@ -779,8 +662,11 @@ int getNumActiveBlock(int method, int sizeofType, cudaDeviceProp& prop, LaunchCo
 // lc.shmemsize
 // lc.numRegStorage  (for Packed method)
 //
-int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
-  LaunchConfig& lc) {
+int cuttKernelLaunchConfiguration(const int sizeofType, const TensorSplit& ts,
+  const int deviceID, const cudaDeviceProp& prop, LaunchConfig& lc) {
+
+  // Return value of numActiveBlock
+  int numActiveBlockReturn = -1;
 
   switch(ts.method) {
     case Trivial:
@@ -824,6 +710,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
       int bestVal = 0;
       int bestNumRegStorage = 0;
+      int bestNumActiveBlock = 0;
 
       lc.numthread.y = 1;
       lc.numthread.z = 1;
@@ -835,12 +722,13 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
         lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
 
-        int numActiveBlock = getNumActiveBlock(ts.method, sizeofType, lc);
+        int numActiveBlock = getNumActiveBlock(ts.method, sizeofType, lc, deviceID, prop);
         // int val = numActiveBlock*lc.numthread.x;
         int val = ts.volMmkUsed()*numActiveBlock;
         if (val > bestVal) {
           bestVal = val;
           bestNumRegStorage = lc.numRegStorage;
+          bestNumActiveBlock = numActiveBlock;
         }
       }
 
@@ -848,6 +736,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
       lc.numRegStorage = bestNumRegStorage;
       lc.numthread.x = ((ts.volMmk - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
+      numActiveBlockReturn = bestNumActiveBlock;
     }
     break;
 
@@ -878,6 +767,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
       int bestVal = 0;
       int bestNumRegStorage = 0;
+      int bestNumActiveBlock = 0;
 
       lc.numthread.y = 1;
       lc.numthread.z = 1;
@@ -888,12 +778,13 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
       for (lc.numRegStorage=minNumRegStorage;lc.numRegStorage <= maxNumRegStorage;lc.numRegStorage++) {
         lc.numthread.x = ((volMmkWithSplit - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
 
-        int numActiveBlock = getNumActiveBlock(ts.method, sizeofType, lc);
+        int numActiveBlock = getNumActiveBlock(ts.method, sizeofType, lc, deviceID, prop);
         // int val = numActiveBlock*lc.numthread.x*lc.numRegStorage;
         int val = ts.volMmkUsed()*numActiveBlock;
         if (val > bestVal) {
           bestVal = val;
           bestNumRegStorage = lc.numRegStorage;
+          bestNumActiveBlock = numActiveBlock;
         }
       }
 
@@ -901,6 +792,7 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
 
       lc.numRegStorage = bestNumRegStorage;
       lc.numthread.x = ((volMmkWithSplit - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize;
+      numActiveBlockReturn = bestNumActiveBlock;
     }
     break;
 
@@ -938,7 +830,11 @@ int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDevicePro
     lc.numblock.z > prop.maxGridSize[2]) return 0;
 
   // Return the number of active blocks with these settings
-  return getNumActiveBlock(ts.method, sizeofType, lc);
+  if (numActiveBlockReturn == -1) {
+    // Not set, get it
+    numActiveBlockReturn = getNumActiveBlock(ts.method, sizeofType, lc, deviceID, prop);
+  }
+  return numActiveBlockReturn;
 }
 
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {

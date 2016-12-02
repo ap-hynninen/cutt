@@ -181,30 +181,40 @@ public:
   ~cuttPlan_t();
   void print();
   void setStream(cudaStream_t stream_in);
-  bool setup(const int rank_in, const int* dim, const int* permutation,
-    const size_t sizeofType_in, cudaDeviceProp& prop, TensorSplit& tensorSplit_in);
   bool countCycles(cudaDeviceProp& prop, const int numPosMbarSample=0);
   void activate();
   void nullDevicePointers();
+
+  static bool createPlans(const int rank, const int* dim, const int* permutation,
+    const int redRank, const int* redDim, const int* redPermutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
 private:
+  static bool createTrivialPlans(const int rank, const int* dim, const int* permutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+  static bool createTiledPlans(const int rank, const int* dim, const int* permutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+  static bool createTiledCopyPlans(const int rank, const int* dim, const int* permutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+  static bool createPackedPlans(const int rank, const int* dim, const int* permutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+  static bool createPackedSplitPlans(const int rank, const int* dim, const int* permutation,
+    const size_t sizeofType, const int deviceID, const cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
+
+  bool setup(const int rank_in, const int* dim, const int* permutation,
+    const size_t sizeofType_in, const TensorSplit& tensorSplit_in,
+    const LaunchConfig& launchConfig_in, const int numActiveBlock_in);
+
 };
-
-// void findMispredictionBest(std::list<cuttPlan_t>& plans, std::vector<double>& times,
-//   std::list<cuttPlan_t>::iterator bestPlan, double bestTime);
-
-// void findMispredictionBest(std::list<cuttPlan_t>::iterator bestPlan, std::vector<double>& times, double bestTime);
 
 void printMatlab(cudaDeviceProp& prop, std::list<cuttPlan_t>& plans, std::vector<double>& times);
 
 void reduceRanks(const int rank, const int* dim, const int* permutation,
   std::vector<int>& redDim, std::vector<int>& redPermutation);
-
-// bool createPlans(const int rank, const int* dim, const int* permutation, const size_t sizeofType,
-//   cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
-
-bool createPlans(const int rank, const int* dim, const int* permutation,
-  const int redRank, const int* redDim, const int* redPermutation,
-  const size_t sizeofType, cudaDeviceProp& prop, std::list<cuttPlan_t>& plans);
 
 std::list<cuttPlan_t>::iterator choosePlanHeuristic(std::list<cuttPlan_t>& plans);
 

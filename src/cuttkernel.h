@@ -28,12 +28,8 @@ SOFTWARE.
 
 void cuttKernelSetSharedMemConfig();
 
-#if 0
-bool cuttKernelDatabase(int deviceID, cudaDeviceProp& prop);
-#endif
-
-int cuttKernelLaunchConfiguration(int sizeofType, TensorSplit& ts, cudaDeviceProp& prop,
-  LaunchConfig& lc);
+int cuttKernelLaunchConfiguration(const int sizeofType, const TensorSplit& ts,
+	const int deviceID, const cudaDeviceProp& prop, LaunchConfig& lc);
 
 bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut);
 

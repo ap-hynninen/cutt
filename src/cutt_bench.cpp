@@ -35,6 +35,7 @@ SOFTWARE.
 #include "TensorTester.h"
 #include "cuttTimer.h"
 #include "CudaMemcpy.h"
+#include "int_vector.h"
 
 #define MILLION 1000000
 #define BILLION 1000000000
@@ -162,6 +163,7 @@ int main(int argc, char *argv[]) {
   }
 
   printDeviceInfo();
+  printf("CPU using vector type %s of length %d\n", INT_VECTOR_TYPE, INT_VECTOR_LEN);
 
   timer = new cuttTimer(elemsize);
 
@@ -797,7 +799,7 @@ bool bench_tensor(std::vector<int>& dim, std::vector<int>& permutation) {
   printVec(permutation);
 
   cuttHandle plan;
-  std::chrono::high_resolution_clock::time_point plan_start, plan_end;
+  std::chrono::high_resolution_clock::time_point plan_start;
   if (use_plantimer) {
     plan_start = std::chrono::high_resolution_clock::now();
   }

@@ -28,17 +28,14 @@ SOFTWARE.
 #include <vector>
 #include "cuttTypes.h"
 #include "cuttplan.h"
+#include "int_vector.h"
 
 void computePos(const int vol0, const int vol1,
   const TensorConvInOut* conv, const int numConv,
-  std::vector<int>& posIn, std::vector<int>& posOut);
-
-void computePos(const int* vol, const int numVol,
-  const TensorConvInOutFast* conv, const int numConv,
   int* posIn, int* posOut);
 
-void computePos(const int vol0, const int vol1,
-  const TensorConvInOutFast* conv, const int numConv,
+void computePos0(const int vol,
+  const TensorConvInOut* conv, const int numConv,
   int* posIn, int* posOut);
 
 void computePosRef(int vol0, int vol1,
@@ -51,7 +48,18 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
   int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
   int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1);
 
+void countPackedGlTransactions0(const int warpSize, const int accWidth, const int cacheWidth,
+  const int numthread, 
+  const int numPos, const int posMbarIn[INT_VECTOR_LEN], const int posMbarOut[INT_VECTOR_LEN],
+  const int volMmk,  const int* __restrict__ posMmkIn, const int* __restrict__ posMmkOut,
+  int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
+  int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1);
+
 void countPackedShTransactions(const int warpSize, const int bankWidth, const int numthread,
+  const int volMmk, const TensorConv* msh, const int numMsh,
+  int& sld_tran, int& sst_tran, int& sld_req, int& sst_req);
+
+void countPackedShTransactions0(const int warpSize, const int bankWidth, const int numthread,
   const int volMmk, const TensorConv* msh, const int numMsh,
   int& sld_tran, int& sst_tran, int& sld_req, int& sst_req);
 

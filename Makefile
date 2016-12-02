@@ -75,7 +75,7 @@ CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
 
 CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS) $(OPTLEV) -march=native
 
-CUDA_CFLAGS = -I${CUDAROOT}/include $(OPTLEV) -Xptxas -dlcm=ca -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CUDA_CCFLAGS)" $(DEFS) -D_FORCE_INLINES
+CUDA_CFLAGS = -I${CUDAROOT}/include -std=c++11 $(OPTLEV) -Xptxas -dlcm=ca -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CUDA_CCFLAGS)" $(DEFS) -D_FORCE_INLINES
 
 ifeq ($(OS),osx)
 CUDA_LFLAGS = -L$(CUDAROOT)/lib

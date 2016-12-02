@@ -29,7 +29,9 @@ SOFTWARE.
 #include <cstring>               // memcpy
 #include "cuttGpuModel.h"
 #include "cuttGpuModelKernel.h"
-#include "int_vector.h"
+#ifdef ENABLE_NVTOOLS
+#include "CudaUtils.h"
+#endif
 
 // #define CALC_L1_CACHELINES
 
@@ -54,16 +56,6 @@ inline int glTransactions(const int* seg, const int n) {
   }
   return count;
 }
-
-// inline int glTransactionsVec(const int* seg, const int n) {
-//   int_vector count(0);
-//   for (int i=1;i < n;i += INT_VECTOR_LEN) {
-//     int_vector seg_prev(seg[i-1]);
-//     int_vector seg_cur(seg[i]);
-//     count += (seg_prev != seg_cur);
-//   }
-//   return count.sum();
-// }
 
 //
 // Slower reference version of glTransactions
@@ -120,6 +112,39 @@ void countCacheLines(const int* seg, const int n, const int cacheWidth, int& cl_
       }
     }
   }
+}
+
+void countCacheLines0(int_vector* segbuf, const int n, const int cacheWidth, int_vector& cl_full, int_vector& cl_part) {
+  int_vector topbit(1 << 31);
+  int_vector lowbits( ~(1 << 31) );
+
+  cl_full = int_vector(0);
+  cl_part = int_vector(0);
+
+  for (int i=0;i < n;i++) {
+    // seg[i] is at the beginning of a full cache line, if seg[i] matches seg[i + cacheWidth - 1]
+    int i1 = i + (cacheWidth - 1);
+    int_vector val(0);
+    if (i1 < n) val = ((segbuf[i] & lowbits) == (segbuf[i1] & lowbits));
+    cl_full += val;
+    // Mark full cache lines with top bit set to 1
+    if (val) {
+      int_vector topbit_mask = bool_to_mask(val) & topbit;
+      int m = std::min(i + cacheWidth, n);
+      for (int j=i;j < m;j++) {
+        segbuf[j] |= topbit_mask;
+      }
+    }
+  }
+
+  for (int i=0;i < n;i++) {
+    int_vector seg = segbuf[i];
+    int_vector segP1 = (i + 1 < n) ? segbuf[i + 1] : int_vector(-1);
+    int_vector part = ((seg & topbit) == int_vector(0));
+    int_vector val2 = (part & (seg != segP1));
+    cl_part += val2;
+  }
+
 }
 
 //
@@ -184,7 +209,7 @@ void countCacheLines(const int pos, const int n, const int cacheWidth, int& cl_f
 //
 void computePos(const int vol0, const int vol1,
   const TensorConvInOut* conv, const int numConv,
-  std::vector<int>& posIn, std::vector<int>& posOut) {
+  int* posIn, int* posOut) {
 
   int nvol = vol1 - vol0;
   for (int i=0;i <= nvol;i++) {
@@ -202,194 +227,71 @@ void computePos(const int vol0, const int vol1,
 
 //
 // Compute memory element positions
+// Starts from zero
 //
-void computePos(const int vol0, const int vol1,
-  const TensorConvInOutFast* conv, const int numConv,
-  int* posIn, int* posOut) {
+void computePos0(const int vol,
+  const int* __restrict__ dIn, const int* __restrict__ cIn, 
+  const int* __restrict__ dOut, const int* __restrict__ cOut,
+  int* __restrict__ posIn, int* __restrict__ posOut) {
 
-#if 1
-  int nvol = vol1 - vol0;
-  for (int i=0;i <= nvol;i+=INT_VECTOR_LEN) {
-    int_vector posInVal(0);
-    int_vector posOutVal(0);
-    int jvec[INT_VECTOR_LEN];
-    for (int k=0;k < INT_VECTOR_LEN;k++) {
-      jvec[k] = i + vol0 + k;
-    }
-    int_vector j(jvec);
-    for (int k=0;k < numConv;k++) {
-      int_vector c_in_d(conv[k].c_in.d);
-      int_vector c_in_M(conv[k].c_in.M);
-      int_vector c_in_s(conv[k].c_in.s);
-      int_vector c_in_n_add_sign(conv[k].c_in.n_add_sign);
-
-      int_vector d_in_d(conv[k].d_in.d);
-      int_vector d_in_M(conv[k].d_in.M);
-      int_vector d_in_s(conv[k].d_in.s);
-      int_vector d_in_n_add_sign(conv[k].d_in.n_add_sign);
-
-      int_vector ct_in(conv[k].ct_in);
-
-      int_vector j_div_c_in = divfast(j, c_in_d, c_in_M, c_in_s, c_in_n_add_sign);
-      int_vector j_rem_d_in = remfast(j_div_c_in, d_in_d, d_in_M, d_in_s, d_in_n_add_sign);
-      posInVal += j_rem_d_in * ct_in;
-
-      //
-      int_vector c_out_d(conv[k].c_out.d);
-      int_vector c_out_M(conv[k].c_out.M);
-      int_vector c_out_s(conv[k].c_out.s);
-      int_vector c_out_n_add_sign(conv[k].c_out.n_add_sign);
-
-      int_vector d_out_d(conv[k].d_out.d);
-      int_vector d_out_M(conv[k].d_out.M);
-      int_vector d_out_s(conv[k].d_out.s);
-      int_vector d_out_n_add_sign(conv[k].d_out.n_add_sign);
-
-      int_vector ct_out(conv[k].ct_out);
-
-      int_vector j_div_c_out = divfast(j, c_out_d, c_out_M, c_out_s, c_out_n_add_sign);
-      int_vector j_rem_d_out = remfast(j_div_c_out, d_out_d, d_out_M, d_out_s, d_out_n_add_sign);
-      posOutVal += j_rem_d_out * ct_out;
-    }
-
-    if (i + INT_VECTOR_LEN - 1 <= nvol) {
-      posInVal.copy(posIn + i);
-      posOutVal.copy(posOut + i);
-    } else {
-      int posInValVec[INT_VECTOR_LEN];
-      int posOutValVec[INT_VECTOR_LEN];
-      posInVal.copy(posInValVec);
-      posOutVal.copy(posOutValVec);
-    
-      for (int k=0;k < INT_VECTOR_LEN;k++) {
-        if (i + k <= nvol) {
-          posIn[i + k]  = posInValVec[k];
-          posOut[i + k] = posOutValVec[k];
-        }
-      }
-    }
-
-#if 0
-    {
-      for (int k=0;k < INT_VECTOR_LEN;k++) {
-        int posInValRef = 0;
-        int posOutValRef = 0;
-        int j = i + vol0 + k;
-        for (int l=0;l < numConv;l++) {
-          posInValRef  += ((j / conv[l].c_in) % conv[l].d_in) * conv[l].ct_in;
-          posOutValRef += ((j / conv[l].c_out) % conv[l].d_out) * conv[l].ct_out;
-        }
-        if (posInValVec[k] != posInValRef || posOutValVec[k] != posOutValRef) {
-          printf("%d %d | %d %d\n", posInValVec[k], posInValRef, posOutValVec[k], posOutValRef);
-          exit(1);
-        }
-      }
-    }
-#endif
-
-  }
-#else
-  int nvol = vol1 - vol0;
-  for (int i=0;i <= nvol;i++) {
-    int posInVal = 0;
-    int posOutVal = 0;
-    int j = i + vol0;
-    for (int k=0;k < numConv;k++) {
-      posInVal  += ((j / conv[k].c_in) % conv[k].d_in) * conv[k].ct_in;
-      posOutVal += ((j / conv[k].c_out) % conv[k].d_out) * conv[k].ct_out;
-    }
+  // Element position vector
+  std::vector<int> pIn(32, 0);
+  std::vector<int> pOut(32, 0);
+  // Scalar element position
+  int posInVal = 0;
+  int posOutVal = 0;
+  for (int i=0;i < vol;i++) {
     posIn[i] = posInVal;
     posOut[i] = posOutVal;
+    // Advance position
+
+    int iIn = 0;
+    while (++pIn[iIn] == dIn[iIn]) {
+      pIn[iIn] = 0;
+      iIn++;
+    }
+    posInVal += cIn[iIn];
+    //
+    int iOut = 0;
+    while (++pOut[iOut] == dOut[iOut]) {
+      pOut[iOut] = 0;
+      iOut++;
+    }
+    posOutVal += cOut[iOut];
   }
-#endif
 }
 
-//
-// Compute memory element positions
-//
-void computePos(const int* vol, const int numVol,
-  const TensorConvInOutFast* conv, const int numConv,
+void computePos0(const int vol,
+  const TensorConvInOut* conv, const int numConv,
   int* posIn, int* posOut) {
 
-  for (int i=0;i < numVol;i+=INT_VECTOR_LEN) {
-    int_vector posInVal(0);
-    int_vector posOutVal(0);
-    int jvec[INT_VECTOR_LEN];
-    for (int k=0;k < INT_VECTOR_LEN;k++) {
-      jvec[k] = vol[std::min(i + k, numVol - 1)];
-    }
-    int_vector j(jvec);
-    for (int k=0;k < numConv;k++) {
-      int_vector c_in_d(conv[k].c_in.d);
-      int_vector c_in_M(conv[k].c_in.M);
-      int_vector c_in_s(conv[k].c_in.s);
-      int_vector c_in_n_add_sign(conv[k].c_in.n_add_sign);
-
-      int_vector d_in_d(conv[k].d_in.d);
-      int_vector d_in_M(conv[k].d_in.M);
-      int_vector d_in_s(conv[k].d_in.s);
-      int_vector d_in_n_add_sign(conv[k].d_in.n_add_sign);
-
-      int_vector ct_in(conv[k].ct_in);
-
-      int_vector j_div_c_in = divfast(j, c_in_d, c_in_M, c_in_s, c_in_n_add_sign);
-      int_vector j_rem_d_in = remfast(j_div_c_in, d_in_d, d_in_M, d_in_s, d_in_n_add_sign);
-      posInVal += j_rem_d_in * ct_in;
-
-      //
-      int_vector c_out_d(conv[k].c_out.d);
-      int_vector c_out_M(conv[k].c_out.M);
-      int_vector c_out_s(conv[k].c_out.s);
-      int_vector c_out_n_add_sign(conv[k].c_out.n_add_sign);
-
-      int_vector d_out_d(conv[k].d_out.d);
-      int_vector d_out_M(conv[k].d_out.M);
-      int_vector d_out_s(conv[k].d_out.s);
-      int_vector d_out_n_add_sign(conv[k].d_out.n_add_sign);
-
-      int_vector ct_out(conv[k].ct_out);
-
-      int_vector j_div_c_out = divfast(j, c_out_d, c_out_M, c_out_s, c_out_n_add_sign);
-      int_vector j_rem_d_out = remfast(j_div_c_out, d_out_d, d_out_M, d_out_s, d_out_n_add_sign);
-      posOutVal += j_rem_d_out * ct_out;
-    }
-
-    if (i + INT_VECTOR_LEN - 1 < numVol) {
-      posInVal.copy(posIn + i);
-      posOutVal.copy(posOut + i);
-    } else {
-      int posInValVec[INT_VECTOR_LEN];
-      int posOutValVec[INT_VECTOR_LEN];
-      posInVal.copy(posInValVec);
-      posOutVal.copy(posOutValVec);
-     
-      for (int k=0;k < INT_VECTOR_LEN;k++) {
-        if (i + k < numVol) {
-          posIn[i + k] = posInValVec[k];
-          posIn[i + k] = posInValVec[k];
-        }
-      }
-    }
-
-#if 0
-    {
-      for (int k=0;k < INT_VECTOR_LEN;k++) {
-        int posInValRef = 0;
-        int posOutValRef = 0;
-        int j = i + vol0 + k;
-        for (int l=0;l < numConv;l++) {
-          posInValRef  += ((j / conv[l].c_in) % conv[l].d_in) * conv[l].ct_in;
-          posOutValRef += ((j / conv[l].c_out) % conv[l].d_out) * conv[l].ct_out;
-        }
-        if (posInValVec[k] != posInValRef || posOutValVec[k] != posOutValRef) {
-          printf("%d %d | %d %d\n", posInValVec[k], posInValRef, posOutValVec[k], posOutValRef);
-          exit(1);
-        }
-      }
-    }
-#endif
-
+  int dIn[32];
+  int cIn[32];
+  int dOut[32];
+  int cOut[32];
+  //
+  int c_in_prev = conv[0].ct_in;
+  int cIn_prev = conv[0].ct_in;
+  int d_in_prev = 1;
+  //
+  int c_out_prev = conv[0].ct_out;
+  int cOut_prev = conv[0].ct_out;
+  int d_out_prev = 1;
+  for (int i=0;i < numConv;i++) {
+    dIn[i] = conv[i].d_in;
+    cIn[i] = cIn_prev + conv[i].ct_in - d_in_prev*c_in_prev;
+    cIn_prev = cIn[i];
+    c_in_prev = conv[i].ct_in;
+    d_in_prev = conv[i].d_in;
+    //
+    dOut[i] = conv[i].d_out;
+    cOut[i] = cOut_prev + conv[i].ct_out - d_out_prev*c_out_prev;
+    cOut_prev = cOut[i];
+    c_out_prev = conv[i].ct_out;
+    d_out_prev = conv[i].d_out;
   }
+
+  computePos0(vol, dIn, cIn, dOut, cOut, posIn, posOut);
 }
 
 //
@@ -411,84 +313,6 @@ void computePosRef(int vol0, int vol1,
     posOut[i] = posOutVal;
   }
 }
-
-#if 0
-//
-// Count number of global memory transactions for Packed -method
-//
-void countPackedGlTransactions(const int warpSize, const int accWidth, const int cacheWidth,
-  const int numthread, const std::vector<int>& posMbarIn, const std::vector<int>& posMbarOut, const int volMmk, 
-  std::vector<int>& posMmkIn, std::vector<int>& posMmkOut,
-  int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
-  int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1) {
-
-  std::vector<int> readSeg(warpSize);
-  std::vector<int> writeSeg(warpSize);
-  std::vector<int> writeSegVolMmk(volMmk*INT_VECTOR_LEN);
-
-  const int accWidthShift = ilog2(accWidth);
-  const int cacheWidthShift = ilog2(cacheWidth);
-
-  int_vector gld_tran_d(0);
-  int_vector gst_tran_d(0);
-  int_vector cl_full_l2_d(0);
-  int_vector cl_part_l2_d(0);
-
-  int m = 0;
-  for (int l=0;l < posMbarIn.size();l += INT_VECTOR_LEN) {
-    for (int j00=0;j00 < volMmk;j00 += numthread) {
-      int n0 = std::min(volMmk, j00 + numthread);
-      for (int j0=j00;j0 < n0;j0+=warpSize) {
-        int n = std::min(warpSize, volMmk - j0);
-
-        int_vector segIn_prev(-1);
-        int_vector segOut_prev(-1);
-
-        for (int j1=0;j1 < n;j1++) {
-          int j = j0 + j1;
-          int_vector posIn  = int_vector(posMbarIn) + int_vector(posMmkIn[j]);
-          int_vector posOut = int_vector(posMbarOut) + int_vector(posMmkOut[j]);
-          int_vector segIn  = posIn >> accWidthShift;
-          int_vector segOut = posOut >> accWidthShift;
-          int_vector segOut2 = posOut >> cacheWidthShift;
-          gld_tran_d += (segIn != segIn_prev);
-          gst_tran_d += (segOut != segOut_prev);
-          segIn_prev  = segIn;
-          segOut_prev = segOut;
-          //
-          segOut2.copy(writeSegVolMmk.data() + m);
-          m += INT_VECTOR_LEN;
-        }
-
-        // Global memory transactions
-        // gld_tran += glTransactions(readSeg.data(), n);
-        // gst_tran += glTransactions(writeSeg.data(), n);
-        gld_req += INT_VECTOR_LEN;
-        gst_req += INT_VECTOR_LEN;
-      }
-    }
-
-    // Global write non-full cache-lines
-    int_vector cl_full_tmp, cl_part_tmp;
-    countCacheLines(writeSegVolMmk.data(), volMmk, cacheWidth, cl_full_tmp, cl_part_tmp);
-    cl_full_l2_d += cl_full_tmp;
-    cl_part_l2_d += cl_part_tmp;
-
-#ifdef CALC_L1_CACHELINES
-#error "CALC_L1_CACHELINES currently not functional"
-    countCacheLines(writePosVolMmk.data(), volMmk, accWidth, cl_full_tmp, cl_part_tmp);
-    cl_full_l1 += cl_full_tmp;
-    cl_part_l1 += cl_part_tmp;
-#endif
-  }
-
-  gld_tran += gld_tran_d.sum();
-  gst_tran += gst_tran_d.sum();
-
-  cl_full_l2 += cl_full_l2_d.sum();
-  cl_part_l2 += cl_part_l2_d.sum();
-}
-#endif
 
 //
 // Count number of global memory transactions for Packed -method
@@ -529,6 +353,7 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
       gst_req++;
     }
   }
+
   // Global write non-full cache-lines
   int cl_full_tmp, cl_part_tmp;
   countCacheLines(writeSegVolMmk.data(), volMmk, cacheWidth, cl_full_tmp, cl_part_tmp);
@@ -545,21 +370,105 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
 }
 
 //
+// Count number of global memory transactions for Packed -method
+//
+void countPackedGlTransactions0(const int warpSize, const int accWidth, const int cacheWidth,
+  const int numthread, 
+  const int numPos, const int posMbarIn[INT_VECTOR_LEN], const int posMbarOut[INT_VECTOR_LEN],
+  const int volMmk,  const int* __restrict__ posMmkIn, const int* __restrict__ posMmkOut,
+  int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
+  int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1) {
+
+  int_vector* writeSegVolMmk = (int_vector *)aligned_alloc(sizeof(int_vector), volMmk*sizeof(int_vector));
+
+  const int accWidthShift = ilog2(accWidth);
+  const int cacheWidthShift = ilog2(cacheWidth);
+
+  int_vector posMbarInVec(posMbarIn);
+  int_vector posMbarOutVec(posMbarOut);
+  int_vector readSeg_prev(-1);
+  int_vector writeSeg_prev(-1);
+  int_vector gld_tran_tmp(0);
+  int_vector gst_tran_tmp(0);
+  for (int j=0;j < volMmk;) {
+    int_vector posMmkInVec(posMmkIn[j]);
+    int_vector posMmkOutVec(posMmkOut[j]);
+
+    int_vector posIn  = posMbarInVec + posMmkInVec;
+    int_vector posOut = posMbarOutVec + posMmkOutVec;
+    int_vector readSeg = posIn >> accWidthShift;
+    int_vector writeSeg = posOut >> accWidthShift;
+
+    gld_tran_tmp += (readSeg != readSeg_prev);
+    gst_tran_tmp += (writeSeg != writeSeg_prev);
+
+    writeSegVolMmk[j] = (posOut >> cacheWidthShift);
+
+    j++;
+    readSeg_prev  = (j & 31) ? readSeg : int_vector(-1);
+    writeSeg_prev = (j & 31) ? writeSeg : int_vector(-1);
+  }
+
+  // Global memory transactions
+  int gld_tran_array[INT_VECTOR_LEN];
+  int gst_tran_array[INT_VECTOR_LEN];
+  gld_tran_tmp.copy(gld_tran_array);
+  gst_tran_tmp.copy(gst_tran_array);
+  for (int i=0;i < numPos;i++) {
+    gld_tran += gld_tran_array[i];
+    gst_tran += gst_tran_array[i];
+  }
+  gld_req += ((volMmk + warpSize - 1)/warpSize)*numPos;
+  gst_req += ((volMmk + warpSize - 1)/warpSize)*numPos;
+
+  // Global write non-full cache-lines
+  int_vector cl_full_tmp, cl_part_tmp;
+  countCacheLines0(writeSegVolMmk, volMmk, cacheWidth, cl_full_tmp, cl_part_tmp);
+  int cl_full_array[INT_VECTOR_LEN];
+  int cl_part_array[INT_VECTOR_LEN];
+  cl_full_tmp.copy(cl_full_array);
+  cl_part_tmp.copy(cl_part_array);
+  for (int i=0;i < numPos;i++) {
+    cl_full_l2 += cl_full_array[i];
+    cl_part_l2 += cl_part_array[i];
+  }
+
+#ifdef CALC_L1_CACHELINES
+#error "CALC_L1_CACHELINES currently not functional"
+  countCacheLines(writePosVolMmk.data(), volMmk, accWidth, cl_full_tmp, cl_part_tmp);
+  cl_full_l1 += cl_full_tmp;
+  cl_part_l1 += cl_part_tmp;
+#endif
+
+  free(writeSegVolMmk);
+}
+
+//
 // Count numnber of shared memory transactions for Packed -method
 //
-void countPackedShTransactions(const int warpSize, const int bankWidth, const int numthread,
+void countPackedShTransactions0(const int warpSize, const int bankWidth, const int numthread,
   const int volMmk, const TensorConv* msh, const int numMsh,
   int& sld_tran, int& sst_tran, int& sld_req, int& sst_req) {
 
+  int p[32];
+  int d[32];
+  int add[32];
+  for (int i=0;i < 32;i++) p[i] = 0;
+  //
+  int c_prev = msh[0].ct;
+  int add_prev = msh[0].ct;
+  int d_prev = 1;
+  for (int i=0;i < numMsh;i++) {
+    d[i] = msh[i].d;
+    add[i] = add_prev + msh[i].ct - d_prev*c_prev;
+    add_prev = add[i];
+    c_prev = msh[i].ct;
+    d_prev = msh[i].d;
+  }
+
   const int bankWidthMask = bankWidth - 1;
 
-  // Pre-compute magic numbers for fast integer division and modulo operations
-  std::vector<TensorConvFast> mshFast(numMsh);
-  for (int i=0;i < numMsh;i++) {
-    mshFast[i].c   = msh[i].c;
-    mshFast[i].d   = msh[i].d;
-    mshFast[i].ct  = msh[i].ct;
-  }
+  int pos = 0;
 
   for (int j00=0;j00 < volMmk;j00+=numthread) {
     int n0 = std::min(volMmk, j00 + numthread);
@@ -568,35 +477,16 @@ void countPackedShTransactions(const int warpSize, const int bankWidth, const in
       std::vector<int> numAccess(warpSize, 0);
       int maxNumAccess = 0;
       int n = std::min(warpSize, volMmk - j0);
-      for (int j1=0;j1 < n;j1+=INT_VECTOR_LEN) {
-        int jvec[INT_VECTOR_LEN];
-        for (int k=0;k < INT_VECTOR_LEN;k++) {
-          jvec[k] = j0 + j1 + k;
+      for (int j1=0;j1 < n;j1++) {
+        int bank = pos & bankWidthMask;
+        maxNumAccess = std::max(maxNumAccess, ++numAccess[bank]);
+        // Advance position
+        int ii = 0;
+        while (++p[ii] == d[ii]) {
+          p[ii] = 0;
+          ii++;
         }
-        int_vector j(jvec);
-        int_vector pos(0);
-        for (int k=0;k < numMsh;k++) {
-          int_vector c_d(mshFast[k].c.d);
-          int_vector c_M(mshFast[k].c.M);
-          int_vector c_s(mshFast[k].c.s);
-          int_vector c_n_add_sign(mshFast[k].c.n_add_sign);
-          int_vector d_d(mshFast[k].d.d);
-          int_vector d_M(mshFast[k].d.M);
-          int_vector d_s(mshFast[k].d.s);
-          int_vector d_n_add_sign(mshFast[k].d.n_add_sign);
-          int_vector ct(mshFast[k].ct);
-
-          int_vector j_div_c = divfast(j, c_d, c_M, c_s, c_n_add_sign);
-          int_vector j_rem_d = remfast(j_div_c, d_d, d_M, d_s, d_n_add_sign);
-          pos += j_rem_d * ct;
-        }
-        int posvec[INT_VECTOR_LEN];
-        pos.copy(posvec);
-        int nleft = std::min(n - j1, INT_VECTOR_LEN);
-        for (int k=0;k < nleft;k++) {
-          int bank = posvec[k] & bankWidthMask;
-          maxNumAccess = std::max(maxNumAccess, ++numAccess[bank]);
-        }
+        pos += add[ii];
       }
       sld_tran += maxNumAccess;
       sst_tran++;
@@ -695,12 +585,10 @@ void countTiledGlTransactions(const bool isCopy,
   for (int iposMbar=0;iposMbar < num_iposMbar;iposMbar++) {
     int posMbar = (numPosMbarSample == 0) ? iposMbar : distribution(generator);
 
-    std::vector<int> posMbarInV(1);
-    std::vector<int> posMbarOutV(1);
-    computePos(posMbar, posMbar, hostMbar.data(), sizeMbar, posMbarInV, posMbarOutV);
+    int posMbarIn;
+    int posMbarOut;
+    computePos(posMbar, posMbar, hostMbar.data(), sizeMbar, &posMbarIn, &posMbarOut);
     // computePos(posMbar, posMbar, hostMbar.begin(), hostMbar.begin() + sizeMbar, posMbarInV, posMbarOutV);
-    int posMbarIn = posMbarInV[0];
-    int posMbarOut = posMbarOutV[0];
 
     // Reads happen at {posMbarIn, posMbarIn + cuDimMk, posMbarIn + 2*cuDimMk, ..., posMbarIn + (TILEDIM - 1)*cuDimMk}
     // Each tile has same number of transactions
@@ -974,6 +862,13 @@ bool check_results(const int tran, const int cl_full, const int cl_part, const i
   return true;
 }
 
+void print_pos(const char* name, const int n, const int* pos) {
+  printf("%s", name);
+  for (int i=0;i < n;i++) {
+    printf(" %d", pos[i]);
+  }
+  printf("\n");
+}
 
 bool testCounters(const int warpSize, const int accWidth, const int cacheWidth) {
 
@@ -1176,6 +1071,7 @@ const int shTestData[138][3] =
 {432, 14, 6},{928, 3780, 4},{1, 6, 1},{6, 5, 756},{30, 9, 84},{270, 14, 6},{928, 4536, 4},
 {1, 6, 1},{6, 6, 756},{36, 9, 84},{324, 14, 6}};
 
+
   const int accWidthShift = ilog2(accWidth);
   const int cacheWidthShift = ilog2(cacheWidth);
 
@@ -1289,7 +1185,7 @@ const int shTestData[138][3] =
         sld_tran_ref, sst_tran_ref, sld_req_ref, sst_req_ref);
 
       int sld_tran = 0, sst_tran = 0, sld_req = 0, sst_req = 0;
-      countPackedShTransactions(warpSize, warpSize, numthread, volMmk, msh.data(), numMsh,
+      countPackedShTransactions0(warpSize, warpSize, numthread, volMmk, msh.data(), numMsh,
         sld_tran, sst_tran, sld_req, sst_req);
 
       if (sld_tran != sld_tran_ref || sst_tran != sst_tran_ref ||
@@ -1303,38 +1199,124 @@ const int shTestData[138][3] =
     }
   }
 
-  //
-  // Test computePos
-  //
   {
-    int sizeConv = 2;
-    std::vector<TensorConvInOut> conv(sizeConv);
-    conv[0] = TensorConvInOut::make_TensorConvInOut(1, 7, 1, 1, 703, 1);
-    conv[1] = TensorConvInOut::make_TensorConvInOut(7, 703, 1170, 703, 7, 164502);
+    std::default_random_engine generator;
+    std::uniform_int_distribution<int> bindist(0, 1);
+    std::uniform_int_distribution<int> dimdist(2, 10);
+    for (int rank=3;rank <= 6;rank++) {
 
-    std::vector<TensorConvInOutFast> convFast(conv.size());
-    for (int i=0;i < conv.size();i++) {
-      convFast[i] = TensorConvInOutFast::make_TensorConvInOutFast(conv[i]);
-    }
+      for (int nsample=0;nsample < 100;nsample++) {
 
-    int vol = 1;
-    std::vector<int> posIn(vol);
-    std::vector<int> posOut(vol);
-    std::vector<int> posInRef(vol);
-    std::vector<int> posOutRef(vol);
-    computePos(vol, vol, convFast.data(), sizeConv, posIn.data(), posOut.data());
-    computePosRef(vol, vol, conv.begin(), conv.begin() + sizeConv, posInRef, posOutRef);
-    for (int i=0;i < vol;i++) {
-      if (posIn[i] != posInRef[i] || posOut[i] != posOutRef[i]) {
-        printf("%d %d | %d %d | i %d vol %d sizeConv %d\n", posIn[i], posInRef[i], posOut[i], posOutRef[i],
-          i, vol, sizeConv);
-        for (int j=0;j < sizeConv;j++) {
-          printf("%d %d %d %d %d %d\n", conv[j].c_in, conv[j].d_in, conv[j].ct_in,
-            conv[j].c_out, conv[j].d_out, conv[j].ct_out);
+        // Take random dimensions
+        int dim[32];
+        for (int i=0;i < rank;i++) {
+          dim[i] = dimdist(generator);
+        }    
+
+        // Include random set of sub-ranks
+        int subrank = 0;
+        int rankIn[32];
+        while (subrank == 0) {
+          subrank = 0;
+          for (int i=0;i < rank;i++) {
+            int val = bindist(generator);
+            rankIn[i] = val;
+            subrank += val;
+          }
         }
-        return false;
+
+        // Build tensor conversion
+        int vol;
+        std::vector<TensorConvInOut> conv(32);
+        {
+          int j = 0;
+          int c = 1;
+          int ct = 1;
+          for (int i=0;i < rank;i++) {
+            if (rankIn[i]) {
+              conv[j].c_in  = c;
+              conv[j].d_in  = dim[i];
+              conv[j].ct_in = ct;
+              //
+              conv[j].c_out  = conv[j].c_in;
+              conv[j].d_out  = conv[j].d_in;
+              conv[j].ct_out = conv[j].ct_in;
+              //
+              j++;
+              c *= dim[i];
+            }
+            ct *= dim[i];
+          }
+          vol = c;
+        }
+
+        int dIn[32];
+        int cIn[32];
+        int c_prev = conv[0].ct_in;
+        int cIn_prev = conv[0].ct_in;
+        int d_prev = 1;
+        for (int i=0;i < subrank;i++) {
+          dIn[i] = conv[i].d_in;
+          cIn[i] = cIn_prev + conv[i].ct_in - d_prev*c_prev;
+          cIn_prev = cIn[i];
+          c_prev = conv[i].ct_in;
+          d_prev = conv[i].d_in;
+        }
+
+        std::vector<int> posIn(vol, -1);
+        std::vector<int> posOut(vol, -1);
+        std::vector<int> posInRef(vol, -2);
+        std::vector<int> posOutRef(vol, -2);
+#ifdef ENABLE_NVTOOLS
+        gpuRangeStart("computePos0");
+#endif
+        computePos0(vol, conv.data(), subrank, posIn.data(), posOut.data());
+        // computePos0(vol, dIn, cIn, dIn, cIn, posIn.data(), posOut.data());
+#ifdef ENABLE_NVTOOLS
+        gpuRangeStop();
+        gpuRangeStart("computePosRef");
+#endif
+        computePosRef(0, vol - 1, conv.begin(), conv.begin() + subrank, posInRef, posOutRef);
+#ifdef ENABLE_NVTOOLS
+        gpuRangeStop();
+#endif
+        for (int i=0;i < vol;i++) {
+          if (posIn[i] != posInRef[i] || posOut[i] != posOutRef[i]) {
+            printf("computePos0 fails rank %d subrank %d\n", rank, subrank);
+            for (int j=0;j < rank;j++) {
+              if (rankIn[j]) {
+                printf("%d* ", dim[j]);
+              } else {
+                printf("%d ", dim[j]);
+              }
+            }
+            printf("\n");
+            printf("d");
+            for (int j=0;j < subrank;j++) {
+              printf(" %d", dIn[j]);
+            }
+            printf(" c");
+            for (int j=0;j < subrank;j++) {
+              printf(" %d", cIn[j]);
+            }
+            printf(" ct");
+            for (int j=0;j < subrank;j++) {
+              printf(" %d", conv[j].ct_in);
+            }
+            printf("\n");
+            print_pos("posIn   ", vol, posIn.data());
+            print_pos("posInRef", vol, posInRef.data());
+            return false;
+          }
+        }
+
+        // print_pos("posIn", vol, posIn.data());
+        // print_pos("posInRef", vol, posInRef.data());
+
       }
+
     }
+
   }
 
   //

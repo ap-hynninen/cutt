@@ -25,12 +25,12 @@ SOFTWARE.
 #include <cuda.h>
 #include <list>
 #include <unordered_map>
-#include <unordered_set>
 #include "CudaUtils.h"
 #include "cuttplan.h"
 #include "cuttkernel.h"
 #include "cuttTimer.h"
 #include "cutt.h"
+// #include <chrono>
 
 // Hash table to store the plans
 static std::unordered_map< cuttHandle, cuttPlan_t* > planStorage;
@@ -39,7 +39,22 @@ static std::unordered_map< cuttHandle, cuttPlan_t* > planStorage;
 static cuttHandle curHandle = 0;
 
 // Table of devices that have been initialized
-static std::unordered_set<int> devicesReady;
+static std::unordered_map<int, cudaDeviceProp> deviceProps;
+
+// Checks prepares device if it's not ready yet and returns device properties
+// Also sets shared memory configuration
+void getDeviceProp(int& deviceID, cudaDeviceProp &prop) {
+  cudaCheck(cudaGetDevice(&deviceID));
+  auto it = deviceProps.find(deviceID);
+  if (it == deviceProps.end()) {
+    // Get device properties and store it for later use
+    cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+    cuttKernelSetSharedMemConfig();
+    deviceProps.insert({deviceID, prop});
+  } else {
+    prop = it->second;
+  }
+}
 
 cuttResult cuttPlanCheckInput(int rank, int* dim, int* permutation, size_t sizeofType) {
   // Check sizeofType
@@ -84,11 +99,10 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   // Check that the current handle is available (it better be!)
   if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
-  // Get all possible ways tensor can be transposed
+  // Prepare device
   int deviceID;
-  cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
-  cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
+  getDeviceProp(deviceID, prop);
 
   // Reduce ranks
   std::vector<int> redDim;
@@ -113,8 +127,16 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
   gpuRangeStart("createPlans");
 #endif
 
-  if (!createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
-    sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  // std::chrono::high_resolution_clock::time_point plan_start;
+  // plan_start = std::chrono::high_resolution_clock::now();
+
+  if (!cuttPlan_t::createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
+    sizeofType, deviceID, prop, plans)) return CUTT_INTERNAL_ERROR;
+
+  // std::chrono::high_resolution_clock::time_point plan_end;
+  // plan_end = std::chrono::high_resolution_clock::now();
+  // double plan_duration = std::chrono::duration_cast< std::chrono::duration<double> >(plan_end - plan_start).count();
+  // printf("createPlans took %lf ms\n", plan_duration*1000.0);
 
 #ifdef ENABLE_NVTOOLS
   gpuRangeStop();
@@ -177,17 +199,10 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   // Check that the current handle is available (it better be!)
   if (planStorage.count(*handle) != 0) return CUTT_INTERNAL_ERROR;
 
-  // Get all possible ways tensor can be transposed
+  // Prepare device
   int deviceID;
-  cudaCheck(cudaGetDevice(&deviceID));
   cudaDeviceProp prop;
-  cudaCheck(cudaGetDeviceProperties(&prop, deviceID));
-
-  // Set shared memory configuration if necessary
-  if (!devicesReady.count(deviceID)) {
-    cuttKernelSetSharedMemConfig();
-    devicesReady.insert(deviceID);
-  }
+  getDeviceProp(deviceID, prop);
 
   // Reduce ranks
   std::vector<int> redDim;
@@ -204,8 +219,8 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
   // Create plans from non-reduced ranks
   // if (!createPlans(rank, dim, permutation, sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
 #else
-  if (!createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
-    sizeofType, prop, plans)) return CUTT_INTERNAL_ERROR;
+  if (!cuttPlan_t::createPlans(rank, dim, permutation, redDim.size(), redDim.data(), redPermutation.data(), 
+    sizeofType, deviceID, prop, plans)) return CUTT_INTERNAL_ERROR;
 #endif
 
   // // Count cycles
@@ -289,12 +304,6 @@ cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata) {
   int deviceID;
   cudaCheck(cudaGetDevice(&deviceID));
   if (deviceID != plan.deviceID) return CUTT_INVALID_DEVICE;
-
-  // Set shared memory configuration if necessary
-  if (!devicesReady.count(deviceID)) {
-    cuttKernelSetSharedMemConfig();
-    devicesReady.insert(deviceID);
-  }
 
   if (!cuttKernel(plan, idata, odata)) return CUTT_INTERNAL_ERROR;
   return CUTT_SUCCESS;
