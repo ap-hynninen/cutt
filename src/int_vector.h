@@ -13,6 +13,7 @@
 const int INT_VECTOR_LEN = 8;
 
 #if defined(__AVX2__)
+// #include <avx2intrin.h>
 const char INT_VECTOR_TYPE[] = "AVX2";
 #else
 const char INT_VECTOR_TYPE[] = "AVX";
@@ -24,12 +25,13 @@ const int INT_VECTOR_LEN = 4;
 const char INT_VECTOR_TYPE[] = "SSE2";
 #endif
 
-// #elif defined(__ALTIVEC__)  // #if defined(__SSE2__)
-// #define USE_ALTIVEC
-// // IBM altivec
-// #include <altivec.h>
-// const int INT_VECTOR_LEN = 4;
-// const char INT_VECTOR_TYPE[] = "ALTIVEC";
+#elif defined(__ALTIVEC__)  // #if defined(__SSE2__)
+#define USE_ALTIVEC
+// IBM altivec
+#include <altivec.h>
+#undef bool
+const int INT_VECTOR_LEN = 4;
+const char INT_VECTOR_TYPE[] = "ALTIVEC";
 
 #else // #if defined(__SSE2__)
 // Nothing
@@ -48,7 +50,7 @@ private:
 #elif defined(USE_SSE)
   __m128i x;
 #elif defined(USE_ALTIVEC)
-  vector signed int;
+  vector signed int x;
 #else
   int x;
 #endif
@@ -64,7 +66,7 @@ public:
 #elif defined(USE_SSE)
     x = _mm_set1_epi32(a);
 #elif defined(USE_ALTIVEC)
-    x = a;
+    x = (vector signed int){a, a, a, a};
 #else
     x = a;
 #endif    
@@ -76,6 +78,7 @@ public:
 #elif defined(USE_SSE)
     x = _mm_set_epi32(a[3], a[2], a[1], a[0]);
 #elif defined(USE_ALTIVEC)
+    x = vec_ld(0, a);
 #else
     x = a[0];
 #endif    
@@ -87,6 +90,10 @@ public:
   }
 #elif defined(USE_SSE)
   inline int_vector(const __m128i ax) {
+    x = ax;
+  }
+#elif defined(USE_ALTIVEC)
+  inline int_vector(const vector signed int ax) {
     x = ax;
   }
 #endif
@@ -101,8 +108,9 @@ public:
 #elif defined(USE_SSE)
     x = _mm_add_epi32(x, a.x);
 #elif defined(USE_ALTIVEC)
+    x += a.x;
 #else
-    x = x + a.x;
+    x += a.x;
 #endif
     return *this;
   }
@@ -113,8 +121,9 @@ public:
 #elif defined(USE_SSE)
     x = _mm_sub_epi32(x, a.x);
 #elif defined(USE_ALTIVEC)
+    x -= a.x;
 #else
-    x = x - a.x;
+    x -= a.x;
 #endif
     return *this;
   }
@@ -125,8 +134,9 @@ public:
 #elif defined(USE_SSE)
     x = _mm_and_si128(x, a.x);
 #elif defined(USE_ALTIVEC)
+    x &= a.x;
 #else
-    x = x & a.x;
+    x &= a.x;
 #endif
     return *this;
   }
@@ -137,8 +147,9 @@ public:
 #elif defined(USE_SSE)
     x = _mm_or_si128(x, a.x);
 #elif defined(USE_ALTIVEC)
+    x |= a.x;
 #else
-    x = x | a.x;
+    x |= a.x;
 #endif
     return *this;
   }
@@ -146,24 +157,26 @@ public:
   inline int_vector operator~() {
 #if defined(USE_AVX)
     int_vector fullmask = int_vector(-1);
-    x = _mm256_andnot_si256(x, fullmask.x);
+    return int_vector( _mm256_andnot_si256(x, fullmask.x) );
 #elif defined(USE_SSE)
     int_vector fullmask = int_vector(-1);
-    x = _mm_andnot_si128(x, fullmask.x);
+    return int_vector( _mm_andnot_si128(x, fullmask.x) );
 #elif defined(USE_ALTIVEC)
+    return int_vector( ~x );
 #else
-    x = ~x;
+    return ~x;
 #endif
-    return *this;
   }
 
-  // Sign extended shift by a constant
+  // Sign extended shift by a constant.
+  // Note: 0 <= n <= 31. Otherwise results are unpredictable
   inline int_vector operator>>=(const int n) {
 #if defined(USE_AVX)
     x = _mm256_srai_epi32(x, n);
 #elif defined(USE_SSE)
     x = _mm_srai_epi32(x, n);
 #elif defined(USE_ALTIVEC)
+    x >>= n;
 #else
     x >>= n;
 #endif
@@ -171,12 +184,14 @@ public:
   }
 
   // Sign extended shift by a constant
+  // Note: 0 <= n <= 31. Otherwise results are unpredictable
   inline int_vector operator<<=(const int n) {
 #if defined(USE_AVX)
     x = _mm256_slli_epi32(x, n);
 #elif defined(USE_SSE)
     x = _mm_slli_epi32(x, n);
 #elif defined(USE_ALTIVEC)
+    x <<= n;
 #else
     x <<= n;
 #endif
@@ -190,6 +205,8 @@ public:
 #elif defined(USE_SSE)
     _mm_storeu_si128((__m128i *)a, x);
 #elif defined(USE_ALTIVEC)
+     // void vec_stl (vector signed int, int, int *);
+    vec_stl(x, 0, a);
 #else
     a[0] = x;
 #endif
@@ -214,6 +231,11 @@ public:
     return a;
   }
 
+  inline friend int_vector operator|(int_vector a, const int_vector b) {
+    a |= b;
+    return a;
+  }
+
   inline friend int_vector operator>>(int_vector a, const int n) {
     a >>= n;
     return a;
@@ -231,7 +253,7 @@ public:
 #elif defined(USE_SSE)
     return int_vector(_mm_cmpeq_epi32(a.x, b.x));
 #elif defined(USE_ALTIVEC)
-    return a;
+    return int_vector(a.x == b.x);
 #else
     return int_vector((a.x == b.x)*(-1));
 #endif
@@ -248,7 +270,7 @@ public:
 #elif defined(USE_SSE)
     return int_vector(_mm_srli_epi32(a.x, 31));
 #elif defined(USE_ALTIVEC)
-    return a;
+    return int_vector((vector signed int)((vector unsigned int)a.x >> 31));
 #else
     return ((unsigned int)a.x >> 31);
 #endif
@@ -285,8 +307,7 @@ public:
     int_vector a = neq_mask(*this, int_vector(0));
     return (_mm_movemask_epi8(a.x) != 0);
 #elif defined(USE_ALTIVEC)
-    int_vector a = neq_mask(*this, int_vector(0));
-    return true;
+    return vec_any_ne(x, ((const vector signed int){0, 0, 0, 0}));
 #else
     return x;
 #endif
@@ -304,5 +325,10 @@ public:
   }
 
 };
+
+#if defined(USE_ALTIVEC)
+#undef vector
+#undef pixel
+#endif
 
 #endif // INT_VECTOR_H

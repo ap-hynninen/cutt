@@ -55,6 +55,17 @@ ifeq ($(shell uname -a|grep Darwin|wc -l|tr -d ' '), 1)
 OS = osx
 endif
 
+# Detect x86_64 vs. Power
+CPU = unknown
+
+ifeq ($(shell uname -a|grep x86_64|wc -l|tr -d ' '), 1)
+CPU = x86_64
+endif
+
+ifeq ($(shell uname -a|grep ppc64|wc -l|tr -d ' '), 1)
+CPU = ppc64
+endif
+
 # Set optimization level
 OPTLEV = -O3
 
@@ -73,7 +84,10 @@ OBJS = $(OBJSLIB) $(OBJSTEST) $(OBJSBENCH)
 #CUDAROOT = $(subst /bin/,,$(dir $(shell which nvcc)))
 CUDAROOT = $(subst /bin/,,$(dir $(shell which $(CUDAC))))
 
-CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS) $(OPTLEV) -march=native
+CFLAGS = -I${CUDAROOT}/include -std=c++11 $(DEFS) $(OPTLEV)
+ifeq ($(CPU),x86_64)
+CFLAGS += -march=native
+endif
 
 CUDA_CFLAGS = -I${CUDAROOT}/include -std=c++11 $(OPTLEV) -Xptxas -dlcm=ca -lineinfo $(GENCODE_FLAGS) --resource-usage -Xcompiler "$(CUDA_CCFLAGS)" $(DEFS) -D_FORCE_INLINES
 
