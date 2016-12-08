@@ -369,6 +369,26 @@ void countPackedGlTransactions(const int warpSize, const int accWidth, const int
 
 }
 
+#ifdef NO_ALIGNED_ALLOC
+//
+// From: http://stackoverflow.com/questions/12504776/aligned-malloc-in-c
+//
+void *aligned_malloc(size_t required_bytes, size_t alignment) {
+    void *p1;
+    void **p2;
+    int offset=alignment-1+sizeof(void*);
+    p1 = malloc(required_bytes + offset);               // the line you are missing
+    p2=(void**)(((size_t)(p1)+offset)&~(alignment-1));  //line 5
+    p2[-1]=p1; //line 6
+    return p2;
+}
+
+void aligned_free( void* p ) {
+    void* p1 = ((void**)p)[-1];         // get the pointer to the buffer we allocated
+    free( p1 );
+}
+#endif
+
 //
 // Count number of global memory transactions for Packed -method
 //
@@ -379,7 +399,11 @@ void countPackedGlTransactions0(const int warpSize, const int accWidth, const in
   int& gld_tran, int& gst_tran, int& gld_req, int& gst_req,
   int& cl_full_l2, int& cl_part_l2, int& cl_full_l1, int& cl_part_l1) {
 
+#ifdef NO_ALIGNED_ALLOC
+  int_vector* writeSegVolMmk = (int_vector *)aligned_malloc(volMmk*sizeof(int_vector), sizeof(int_vector));
+#else
   int_vector* writeSegVolMmk = (int_vector *)aligned_alloc(sizeof(int_vector), volMmk*sizeof(int_vector));
+#endif
 
   const int accWidthShift = ilog2(accWidth);
   const int cacheWidthShift = ilog2(cacheWidth);
@@ -440,7 +464,11 @@ void countPackedGlTransactions0(const int warpSize, const int accWidth, const in
   cl_part_l1 += cl_part_tmp;
 #endif
 
+#ifdef NO_ALIGNED_ALLOC
+  aligned_free(writeSegVolMmk);
+#else
   free(writeSegVolMmk);
+#endif
 }
 
 //

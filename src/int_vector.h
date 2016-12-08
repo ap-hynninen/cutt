@@ -326,6 +326,7 @@ public:
 
 };
 
+
 #if defined(USE_ALTIVEC)
 #undef vector
 #undef pixel

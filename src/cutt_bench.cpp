@@ -167,7 +167,7 @@ int main(int argc, char *argv[]) {
 
   timer = new cuttTimer(elemsize);
 
-  dataSize = (elemsize == 4) ? 420*MILLION : 380*MILLION;
+  dataSize = (elemsize == 4) ? 420*MILLION : 370*MILLION;
 
   // Allocate device data, 100M elements
   allocate_device<char>(&dataIn, dataSize*(size_t)elemsize);

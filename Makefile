@@ -31,7 +31,8 @@ CC = g++
 # CUDA compiler
 CUDAC = nvcc
 
-# Enable nvvp profiling by using "make ENABLE_NVTOOLS=1"
+# Enable nvvp profiling of CPU code by using "make ENABLE_NVTOOLS=1"
+# If aligned_alloc() is not available, use "make NO_ALIGNED_ALLOC=1"
 
 # SM versions for which code is generated must be sm_30 and above
 GENCODE_SM35  := -gencode arch=compute_35,code=sm_35
@@ -74,6 +75,10 @@ DEFS =
 
 ifdef ENABLE_NVTOOLS
 DEFS += -DENABLE_NVTOOLS
+endif
+
+ifdef NO_ALIGNED_ALLOC
+DEFS += -DNO_ALIGNED_ALLOC
 endif
 
 OBJSLIB = build/cutt.o build/cuttplan.o build/cuttkernel.o build/cuttGpuModel.o build/CudaUtils.o build/cuttTimer.o build/cuttGpuModelKernel.o
