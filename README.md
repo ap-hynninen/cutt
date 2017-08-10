@@ -182,6 +182,8 @@ cuttResult cuttDestroy(cuttHandle handle);
 // handle            = Returned handle to cuTT plan
 // idata             = Input data size product(dim)
 // odata             = Output data size product(dim)
+// alpha             = scaling-factor for input
+// beta              = scaling-factor for output
 // 
 // Returns
 // Success/unsuccess code

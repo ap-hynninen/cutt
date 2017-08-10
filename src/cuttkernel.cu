@@ -35,12 +35,14 @@ SOFTWARE.
 //  dim3 numthread(TILEDIM, TILEROWS, 1);
 //  dim3 numblock( ((plan.volMm-1)/TILEDIM+1)*((plan.volMk-1)/TILEDIM+1), 1, plan.volMbar);
 //
-template <typename T>
+template <typename T, bool betaIsZero>
 __global__ void transposeTiled(
   const int numMm, const int volMbar, const int sizeMbar,
   const int2 tiledVol, const int cuDimMk, const int cuDimMm,
   const TensorConvInOut* RESTRICT glMbar,
-  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut, 
+  const T alpha, 
+  const T beta) {
 
   // Shared memory
   __shared__ T shTile[TILEDIM][TILEDIM+1];
@@ -108,7 +110,10 @@ __global__ void transposeTiled(
       // int pos = posOut + j*cuDimMm;
       // if (xout + j < readVol.x && yout < readVol.y) {
       if ((maskOutx & (1 << j)) != 0 ) {
-        dataOut[posOut] = shTile[threadIdx.x][threadIdx.y + j];
+        if( betaIsZero )
+           dataOut[posOut] = alpha * shTile[threadIdx.x][threadIdx.y + j];
+        else
+           dataOut[posOut] = alpha * shTile[threadIdx.x][threadIdx.y + j] + beta * dataOut[posOut];
       }
       posOut += posOutAdd;
     }
@@ -120,14 +125,16 @@ __global__ void transposeTiled(
 //
 // Packed transpose. Thread block loads plan.volMmk number of elements
 //
-template <typename T, int numRegStorage>
+template <typename T, int numRegStorage, bool betaIsZero>
 __global__ void transposePacked(
   const int volMmk, const int volMbar,
   const int sizeMmk, const int sizeMbar,
   const TensorConvInOut* RESTRICT gl_Mmk,
   const TensorConvInOut* RESTRICT gl_Mbar,
   const TensorConv* RESTRICT gl_Msh,
-  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut,
+  const T alpha,
+  const T beta) {
 
   // Shared memory. volMmk elements
   extern __shared__ char shBuffer_char[];
@@ -213,7 +220,11 @@ __global__ void transposePacked(
     for (int j=0;j < numRegStorage;j++) {
       int posMmk = threadIdx.x + j*blockDim.x;
       int posOut = posMbarOut + posMmkOut[j];
-      if (posMmk < volMmk) dataOut[posOut] = shBuffer[posSh[j]];
+      if (posMmk < volMmk) 
+        if( betaIsZero )
+           dataOut[posOut] = alpha * shBuffer[posSh[j]];
+        else
+           dataOut[posOut] = alpha * shBuffer[posSh[j]] + beta * dataOut[posOut];
     }
 
 
@@ -227,7 +238,7 @@ __global__ void transposePacked(
 // dim nthread(((volMmkWithSplit - 1)/(prop.warpSize*lc.numRegStorage) + 1)*prop.warpSize, 1, 1)
 // dim nblock(ts.numSplit, min(256, max(1, ts.volMbar)), 1)
 //
-template <typename T, int numRegStorage>
+template <typename T, int numRegStorage, bool betaIsZero>
 __global__ void transposePackedSplit(
   const int splitDim, const int volMmkUnsplit, const int volMbar,
   const int sizeMmk, const int sizeMbar,
@@ -235,7 +246,9 @@ __global__ void transposePackedSplit(
   const TensorConvInOut* RESTRICT glMmk,
   const TensorConvInOut* RESTRICT glMbar,
   const TensorConv* RESTRICT glMsh,
-  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut, 
+  const T alpha,
+  const T beta) {
 
   // Shared memory. max(volSplit)*volMmkUnsplit T elements
   extern __shared__ char shBuffer_char[];
@@ -339,7 +352,11 @@ __global__ void transposePackedSplit(
     for (int j=0;j < numRegStorage;j++) {
       int posMmk = threadIdx.x + j*blockDim.x;
       int posOut = posMbarOut + posMmkOut[j];
-      if (posMmk < volMmkSplit) dataOut[posOut] = shBuffer[posSh[j]];
+      if (posMmk < volMmkSplit) 
+        if( betaIsZero )
+           dataOut[posOut] = alpha * shBuffer[posSh[j]];
+        else
+           dataOut[posOut] = alpha * shBuffer[posSh[j]] + beta * dataOut[posOut];
     }
 
   }
@@ -353,13 +370,15 @@ __global__ void transposePackedSplit(
 //  dim3 numthread(TILEDIM, TILEROWS, 1);
 //  dim3 numblock( ((plan.volMm-1)/TILEDIM+1)*((plan.volMkBar-1)/TILEDIM+1), 1, plan.volMbar);
 //
-template <typename T>
+template <typename T, bool betaIsZero>
 __global__ void transposeTiledCopy(
   const int numMm, const int volMbar, const int sizeMbar,
   const int cuDimMk, const int cuDimMm,
   const int2 tiledVol,
   const TensorConvInOut* RESTRICT gl_Mbar,
-  const T* RESTRICT dataIn, T* RESTRICT dataOut) {
+  const T* RESTRICT dataIn, T* RESTRICT dataOut, 
+  const T alpha,
+  const T beta) {
 
   const int warpLane = threadIdx.x & (warpSize - 1);
   TensorConvInOut Mbar;
@@ -416,7 +435,10 @@ __global__ void transposeTiledCopy(
     for (int j=0;j < TILEDIM;j += TILEROWS) {
       // if ((x < tiledVol.x) && (y + j < tiledVol.y)) {
       if ((mask & (1 << j)) != 0) {
-        dataOut[posOut] = val[j/TILEROWS];
+        if(betaIsZero)
+           dataOut[posOut] = alpha * val[j/TILEROWS];
+        else
+           dataOut[posOut] = alpha * val[j/TILEROWS] + beta * dataOut[posOut];
       }
       posOut += posOutAdd;
     }
@@ -522,27 +544,27 @@ __global__ void transposeTiledCopy(
 // Sets shared memory bank configuration for all kernels. Needs to be called once per device.
 //
 void cuttKernelSetSharedMemConfig() {  
-#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePacked<float, NREG>, cudaSharedMemBankSizeFourByte ))
+#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePacked<float, NREG, true>, cudaSharedMemBankSizeFourByte ))
 #include "calls.h"
 #undef CALL
 
-#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePacked<double, NREG>, cudaSharedMemBankSizeEightByte ))
+#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePacked<double, NREG, true>, cudaSharedMemBankSizeEightByte ))
 #include "calls.h"
 #undef CALL
 
-#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePackedSplit<float, NREG>, cudaSharedMemBankSizeFourByte ))
+#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePackedSplit<float, NREG, true>, cudaSharedMemBankSizeFourByte ))
 #include "calls.h"
 #undef CALL
 
-#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePackedSplit<double, NREG>, cudaSharedMemBankSizeEightByte ))
+#define CALL(NREG) cudaCheck(cudaFuncSetSharedMemConfig(transposePackedSplit<double, NREG, true>, cudaSharedMemBankSizeEightByte ))
 #include "calls.h"
 #undef CALL
 
-  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiled<float>, cudaSharedMemBankSizeFourByte));
-  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledCopy<float>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiled<float, true>, cudaSharedMemBankSizeFourByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledCopy<float, true>, cudaSharedMemBankSizeFourByte));
 
-  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiled<double>, cudaSharedMemBankSizeEightByte));
-  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledCopy<double>, cudaSharedMemBankSizeEightByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiled<double, true>, cudaSharedMemBankSizeEightByte));
+  cudaCheck(cudaFuncSetSharedMemConfig(transposeTiledCopy<double, true>, cudaSharedMemBankSizeEightByte));
 
 }
 
@@ -574,7 +596,7 @@ int getNumActiveBlock(const int method, const int sizeofType, const LaunchConfig
     {
 #define CALL0(TYPE, NREG) \
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-    transposePacked<TYPE, NREG>, numthread, lc.shmemsize)
+    transposePacked<TYPE, NREG, true>, numthread, lc.shmemsize)
       switch(lc.numRegStorage) {
 #define CALL(ICASE) case ICASE: if (sizeofType == 4) CALL0(float,  ICASE); if (sizeofType == 8) CALL0(double, ICASE); break
 #include "calls.h"
@@ -610,7 +632,7 @@ int getNumActiveBlock(const int method, const int sizeofType, const LaunchConfig
         // key not found in cache, determine value and add it to cache
 #define CALL0(TYPE, NREG) \
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock, \
-    transposePackedSplit<TYPE, NREG>, numthread, lc.shmemsize)
+    transposePackedSplit<TYPE, NREG, true>, numthread, lc.shmemsize)
       switch(lc.numRegStorage) {
 #define CALL(ICASE) case ICASE: if (sizeofType == 4) CALL0(float,  ICASE); if (sizeofType == 8) CALL0(double, ICASE); break
 #include "calls.h"
@@ -626,10 +648,10 @@ int getNumActiveBlock(const int method, const int sizeofType, const LaunchConfig
     {
       if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiled<float>, numthread, lc.shmemsize);
+          transposeTiled<float, true>, numthread, lc.shmemsize);
       } else {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiled<double>, numthread, lc.shmemsize);
+          transposeTiled<double, true>, numthread, lc.shmemsize);
       }
     }
     break;
@@ -638,10 +660,10 @@ int getNumActiveBlock(const int method, const int sizeofType, const LaunchConfig
     {
       if (sizeofType == 4) {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledCopy<float>, numthread, lc.shmemsize);
+          transposeTiledCopy<float, true>, numthread, lc.shmemsize);
       } else {
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlock,
-          transposeTiledCopy<double>, numthread, lc.shmemsize);
+          transposeTiledCopy<double, true>, numthread, lc.shmemsize);
       }
     }
     break;
@@ -837,14 +859,30 @@ int cuttKernelLaunchConfiguration(const int sizeofType, const TensorSplit& ts,
   return numActiveBlockReturn;
 }
 
-bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
+bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut, void* alphaPtr,
+      void* betaPtr) {
 
   LaunchConfig& lc = plan.launchConfig;
   TensorSplit& ts = plan.tensorSplit;
 
+  double alpha = 1;
+  double beta = 0;
+  if( alphaPtr && plan.sizeofType == 4 )
+     alpha = *((float*)alphaPtr);
+  if( alphaPtr && plan.sizeofType == 8 )
+     alpha = *((double*)alphaPtr);
+  if( betaPtr && plan.sizeofType == 4 )
+     beta = *((float*)betaPtr);
+  if( betaPtr && plan.sizeofType == 8 )
+     beta = *((double*)betaPtr);
+
   switch(ts.method) {
     case Trivial:
     {
+      if( alpha != 1 || beta != 0 ){
+         printf("cuTT ERROR: this case still has to be implemented\n"); 
+         return false;
+      }
       cudaCheck(cudaMemcpyAsync(dataOut, dataIn, ts.volMmk*ts.volMbar*plan.sizeofType,
         cudaMemcpyDeviceToDevice, plan.stream));
     }
@@ -853,11 +891,22 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     case Packed:
     {
       switch(lc.numRegStorage) {
-#define CALL0(TYPE, NREG) \
-    transposePacked<TYPE, NREG> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+#define CALL0(TYPE, NREG, betaIsZero) \
+    transposePacked<TYPE, NREG, betaIsZero> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
       (ts.volMmk, ts.volMbar, ts.sizeMmk, ts.sizeMbar, \
-      plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut)
-#define CALL(ICASE) case ICASE: if (plan.sizeofType == 4) CALL0(float,  ICASE); if (plan.sizeofType == 8) CALL0(double, ICASE); break
+      plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut, alpha, beta)
+#define CALL(ICASE) case ICASE: \
+         if (plan.sizeofType == 4) \
+            if (beta == 0) \
+               CALL0(float,  ICASE, true); \
+            else \
+               CALL0(float,  ICASE, false); \
+         if (plan.sizeofType == 8) \
+            if (beta == 0) \
+               CALL0(double, ICASE, true); \
+            else \
+               CALL0(double, ICASE, false); \
+         break
 #include "calls.h"
         default:
         printf("cuttKernel no template implemented for numRegStorage %d\n", lc.numRegStorage);
@@ -872,11 +921,22 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
     case PackedSplit:
     {
       switch(lc.numRegStorage) {
-#define CALL0(TYPE, NREG) \
-    transposePackedSplit<TYPE, NREG> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
+#define CALL0(TYPE, NREG, betaIsZero) \
+    transposePackedSplit<TYPE, NREG, betaIsZero> <<< lc.numblock, lc.numthread, lc.shmemsize, plan.stream >>> \
       (ts.splitDim, ts.volMmkUnsplit, ts. volMbar, ts.sizeMmk, ts.sizeMbar, \
-        plan.cuDimMm, plan.cuDimMk, plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut)
-#define CALL(ICASE) case ICASE: if (plan.sizeofType == 4) CALL0(float,  ICASE); if (plan.sizeofType == 8) CALL0(double, ICASE); break
+        plan.cuDimMm, plan.cuDimMk, plan.Mmk, plan.Mbar, plan.Msh, (TYPE *)dataIn, (TYPE *)dataOut, alpha, beta)
+#define CALL(ICASE) case ICASE: \
+         if (plan.sizeofType == 4) \
+            if (beta == 0) \
+               CALL0(float,  ICASE, true); \
+            else \
+               CALL0(float,  ICASE, false); \
+         if (plan.sizeofType == 8) \
+            if (beta == 0) \
+               CALL0(double, ICASE, true); \
+            else \
+               CALL0(double, ICASE, false); \
+         break
 #include "calls.h"
         default:
         printf("cuttKernel no template implemented for numRegStorage %d\n", lc.numRegStorage);
@@ -890,24 +950,40 @@ bool cuttKernel(cuttPlan_t& plan, void* dataIn, void* dataOut) {
 
     case Tiled:
     {
-#define CALL(TYPE) \
-      transposeTiled<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
+#define CALL(TYPE, betaIsZero) \
+      transposeTiled<TYPE, betaIsZero> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
       (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.tiledVol, plan.cuDimMk, plan.cuDimMm, \
-        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
-      if (plan.sizeofType == 4) CALL(float);
-      if (plan.sizeofType == 8) CALL(double);
+        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut, alpha, beta)
+      if (plan.sizeofType == 4) 
+         if(beta == 0)
+            CALL(float, true);
+         else
+            CALL(float, false);
+      if (plan.sizeofType == 8) 
+         if(beta == 0)
+            CALL(double, true);
+         else
+            CALL(double, false);
 #undef CALL
     }
     break;
 
     case TiledCopy:
     {
-#define CALL(TYPE) \
-      transposeTiledCopy<TYPE> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
+#define CALL(TYPE, betaIsZero) \
+      transposeTiledCopy<TYPE, betaIsZero> <<< lc.numblock, lc.numthread, 0, plan.stream >>> \
       (((ts.volMm - 1)/TILEDIM + 1), ts.volMbar, ts.sizeMbar, plan.cuDimMk, plan.cuDimMm, plan.tiledVol, \
-        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut)
-      if (plan.sizeofType == 4) CALL(float);
-      if (plan.sizeofType == 8) CALL(double);
+        plan.Mbar, (TYPE *)dataIn, (TYPE *)dataOut, alpha, beta)
+      if (plan.sizeofType == 4) 
+         if(beta == 0)
+            CALL(float, true);
+         else
+            CALL(float, false);
+      if (plan.sizeofType == 8) 
+         if(beta == 0)
+            CALL(double, true);
+         else
+            CALL(double, false);
 #undef CALL
     }
     break;
