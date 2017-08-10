@@ -74,7 +74,7 @@ cuttResult cuttPlan(cuttHandle* handle, int rank, int* dim, int* permutation, si
 // Success/unsuccess code
 // 
 cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutation, size_t sizeofType,
-  cudaStream_t stream, void* idata, void* odata);
+  cudaStream_t stream, void* idata, void* odata, void* alpha = NULL, void* beta = NULL);
 
 //
 // Destroy plan
@@ -88,16 +88,18 @@ cuttResult cuttPlanMeasure(cuttHandle* handle, int rank, int* dim, int* permutat
 cuttResult cuttDestroy(cuttHandle handle);
 
 //
-// Execute plan out-of-place
+// Execute plan out-of-place; performs a tensor transposition of the form \f[ \mathcal{B}_{\pi(i_0,i_1,...,i_{d-1})} \gets \alpha * \mathcal{A}_{i_0,i_1,...,i_{d-1}} + \beta * \mathcal{B}_{\pi(i_0,i_1,...,i_{d-1})}, \f]
 //
 // Parameters
 // handle            = Returned handle to cuTT plan
 // idata             = Input data size product(dim)
 // odata             = Output data size product(dim)
+// alpha             = scalar for input
+// beta              = scalar for output
 // 
 // Returns
 // Success/unsuccess code
 //
-cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata);
+cuttResult cuttExecute(cuttHandle handle, void* idata, void* odata, void* alpha = NULL, void* beta = NULL);
 
 #endif // CUTT_H
